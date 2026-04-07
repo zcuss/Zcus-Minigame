@@ -55,6 +55,7 @@ public sealed class MainForm : Form
     private string _lastWindowTitle = string.Empty;
     private bool _usingFallbackRegion;
     private double _lastLicenseRevalidateAtSec;
+    private double _lastOcrDebugLogMs;
 
     private int _hit;
     private Keys _startHotkey = Keys.F6;
@@ -1382,6 +1383,13 @@ public sealed class MainForm : Form
             ? $"Status: Tracking... hold {holdSec:0.00}/{AppConstants.OverlapHoldBeforePressSec:0.00}s"
             : "Status: Idle";
 
+        if ((nowMs - _lastOcrDebugLogMs) >= 250)
+        {
+            AppendLog(
+                $"OCR dbg | mode={mode} overlap={(result.Overlap ? "Y" : "N")} key={(key ?? "-").ToUpperInvariant()} score={score:0.000} diff={diffText} hold={holdSec:0.00}s | {dbg}");
+            _lastOcrDebugLogMs = nowMs;
+        }
+
         if (canPress)
         {
             var keyToPress = AppConstants.AutoPressUseOcrKey && isKeyOk ? key : null;
@@ -1394,7 +1402,8 @@ public sealed class MainForm : Form
 
                 _hit++;
 
-                AppendLog($"[{DateTime.Now:HH:mm:ss}] PRESS {keyToPress.ToUpperInvariant()}  | total={_hit}");
+                AppendLog(
+                    $"[{DateTime.Now:HH:mm:ss}] CLICK {keyToPress.ToUpperInvariant()} | total={_hit} score={score:0.000} diff={diffText} hold={holdSec:0.00}s");
                 RefreshSummary();
                 _overlapStreak = 0;
                 _overlapStartedAtSec = null;
