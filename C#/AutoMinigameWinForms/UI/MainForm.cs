@@ -487,6 +487,7 @@ public sealed class MainForm : Form
             AutoSize = true,
             ForeColor = Color.FromArgb(180, 180, 180),
             Padding = new Padding(0, 0, 0, 4),
+            Visible = false,
         };
         layout.Controls.Add(_detailLabel, 0, 5);
 
@@ -1373,7 +1374,7 @@ public sealed class MainForm : Form
             );
 
             _lastOcr = ocrNow;
-            if (!ocrNow.IsAmbiguous && IsAllowedAndMapped(ocrNow.Key, allowedKeys))
+            if (IsAllowedAndMapped(ocrNow.Key, allowedKeys))
             {
                 _lastValidOcr = ocrNow;
                 _lastValidOcrMs = nowMs;
@@ -1396,7 +1397,7 @@ public sealed class MainForm : Form
             $"red={redAngleText} blue={result.BlueAngles.Count} diff={diffText} overlap={(result.Overlap ? "Y" : "N")} mode={mode} key={key ?? "-"}({score:0.00}) m={margin:0.00} {dbg}";
 
         var strictDiffLimit = Math.Min(AppConstants.PressStrictMaxDiffDeg, _cfg.AngleToleranceDeg * AppConstants.PressStrictTolRatio);
-        var isKeyOk = !ocr.IsAmbiguous && IsAllowedAndMapped(key, allowedKeys);
+        var isKeyOk = IsAllowedAndMapped(key, allowedKeys);
         var isTimingOk = result.BestDiff.HasValue && result.BestDiff.Value <= strictDiffLimit;
         var isStableFrame = result.Overlap && isKeyOk && score >= _ocrMinScore;
 

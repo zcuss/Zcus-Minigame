@@ -210,7 +210,6 @@ public sealed class OcrEngine : IDisposable
         var ambiguous = margin < minMargin;
         var dbg = $"{debugPrefix} m:{margin:0.00}{(ambiguous ? " amb" : string.Empty)} " + string.Join(' ', ranked.Take(3).Select(x => $"{x.key}:{x.score:0.00}"));
 
-        // Prevent constant false-positive key lock (e.g. always 'W') when candidates are too close.
         if (bestScore < minScore)
         {
             return new OcrResult(null, bestScore, dbg, new Rect(x1, y1, x2 - x1, y2 - y1), margin, true);
