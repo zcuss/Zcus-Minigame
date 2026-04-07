@@ -205,7 +205,7 @@ public sealed class MainForm : Form
             DropDownStyle = ComboBoxStyle.DropDownList,
             Width = 90,
         };
-        _cbMode.Items.AddRange(["AUTO", "WASD", "1234"]);
+        _cbMode.Items.AddRange(["WASD", "AUTO", "1234"]);
         _cbMode.SelectedItem = AppConstants.OcrModeDefault;
         _cbStartHotkey = new ComboBox
         {

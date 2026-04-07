@@ -1,0 +1,450 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Accurate Skill Check</title>
+<style>
+    body{
+        margin:0;
+        height:100vh;
+        display:flex;
+        justify-content:center;
+        align-items:center;
+        background:#4f7337;
+        background-image: radial-gradient(circle, #5f8a42, #3a5a2a);
+        font-family:Arial, sans-serif;
+        color:#eaf3ff;
+    }
+
+    canvas{
+        width:252px;
+        height:252px;
+        image-rendering: crisp-edges;
+    }
+
+    .hud{
+        position:fixed;
+        top:14px;
+        left:14px;
+        background:rgba(7, 16, 30, 0.85);
+        border:1px solid #3c5ea8;
+        border-radius:8px;
+        padding:10px 12px;
+        min-width:180px;
+        font-size:13px;
+        line-height:1.45;
+    }
+
+    .hud .title{
+        font-weight:700;
+        margin-bottom:6px;
+        color:#b8d1ff;
+    }
+
+    .log-panel{
+        position:fixed;
+        right:14px;
+        top:14px;
+        width:320px;
+        background:rgba(7, 16, 30, 0.85);
+        border:1px solid #3c5ea8;
+        border-radius:8px;
+        padding:10px 12px;
+        font-size:12px;
+        line-height:1.35;
+    }
+
+    .log-actions{
+        display:flex;
+        gap:6px;
+        margin:6px 0;
+    }
+
+    .log-actions button{
+        border:1px solid #4f73c2;
+        background:#122544;
+        color:#eaf3ff;
+        border-radius:4px;
+        padding:4px 8px;
+        cursor:pointer;
+        font-size:12px;
+    }
+
+    #reportBox{
+        width:100%;
+        height:160px;
+        resize:vertical;
+        background:#0d1b33;
+        color:#d9e8ff;
+        border:1px solid #385890;
+        border-radius:4px;
+        padding:6px;
+        box-sizing:border-box;
+        font-family:Consolas, monospace;
+        font-size:11px;
+    }
+</style>
+</head>
+<body>
+
+<div class="hud">
+    <div class="title">Debug Score</div>
+    <div id="stat-hit">Hit: 0</div>
+    <div id="stat-miss">Miss: 0</div>
+    <div id="stat-acc">Accuracy: 0.0%</div>
+    <div id="stat-streak">Streak: 0</div>
+    <div id="stat-best">Best Streak: 0</div>
+    <div id="stat-last">Last Offset: -</div>
+</div>
+
+<div class="log-panel">
+    <div class="title">Result Log</div>
+    <div id="reportSummary">No attempts yet.</div>
+    <div class="log-actions">
+        <button id="copyReportBtn">Copy Log</button>
+        <button id="copyCsvBtn">Copy CSV</button>
+        <button id="clearReportBtn">Clear</button>
+    </div>
+    <textarea id="reportBox" readonly></textarea>
+</div>
+<div class="hud" style="top:auto;bottom:14px;">
+    <div class="title">Mode</div>
+    <div>Press TAB â†’ Switch Game</div>
+    <div id="modeText">Current: WASD</div>
+</div>
+<canvas id="game" width="180" height="180"></canvas>
+
+<script>
+const canvas = document.getElementById("game");
+const ctx = canvas.getContext("2d");
+
+const MODE_WASD = 0;
+const MODE_1234 = 1;
+
+let gameMode = MODE_WASD;
+const modeText = document.getElementById("modeText");
+
+const GAME1 = {
+    name: "WASD",
+    keys: ["W", "A", "S", "D"],
+    zoneColor: "#1f62ff",
+    pointerColor: "red",
+    currentKey: "W",
+};
+
+const GAME2 = {
+    name: "1234",
+    keys: ["1", "2", "3", "4"],
+    zoneColor: "#3fd0b5",
+    currentKey: "2",
+    sweepAngle: -Math.PI / 2,
+    greenAngle: Math.PI * 0.25,
+    greenSize: 0.42,
+    sweepSpeed: 0.02
+};
+
+let tickAngle = Math.random() * Math.PI * 2;
+let zoneAngle = Math.random() * Math.PI * 2;
+
+const speed = 0.045;
+const hitWindow = 0.25;
+const START_ANGLE = -Math.PI / 2;
+const FULL_TURN = Math.PI * 2;
+const TIMEOUT_PRESS = "TIMEOUT";
+
+const cx = 90;
+const cy = 90;
+const radius = 55;
+const zoneSize = 0.45;
+const zoneCenterOffset = zoneSize / 2;
+let game1RoundStart = START_ANGLE;
+
+let statHit = 0;
+let statMiss = 0;
+let statStreak = 0;
+let statBest = 0;
+let statLastOffset = null;
+const attempts = [];
+
+const statHitEl = document.getElementById("stat-hit");
+const statMissEl = document.getElementById("stat-miss");
+const statAccEl = document.getElementById("stat-acc");
+const statStreakEl = document.getElementById("stat-streak");
+const statBestEl = document.getElementById("stat-best");
+const statLastEl = document.getElementById("stat-last");
+const reportSummaryEl = document.getElementById("reportSummary");
+const reportBoxEl = document.getElementById("reportBox");
+const copyReportBtn = document.getElementById("copyReportBtn");
+const copyCsvBtn = document.getElementById("copyCsvBtn");
+const clearReportBtn = document.getElementById("clearReportBtn");
+
+function randomFromSet(arr){
+    return arr[Math.floor(Math.random() * arr.length)];
+}
+
+function randomFromSetExcept(arr, prev){
+    let next = prev;
+    while(next === prev){
+        next = randomFromSet(arr);
+    }
+    return next;
+}
+
+function randomZone(){
+    return Math.random() * Math.PI * 2;
+}
+
+function angleDiff(a, b){
+    const d = Math.abs(a - b) % (Math.PI * 2);
+    return Math.min(d, Math.PI * 2 - d);
+}
+
+function radToDeg(v){
+    return v * 180 / Math.PI;
+}
+
+function fillRoundRect(x, y, w, h, r){
+    const rr = Math.max(0, Math.min(r, Math.min(w, h) / 2));
+    ctx.beginPath();
+    ctx.moveTo(x + rr, y);
+    ctx.lineTo(x + w - rr, y);
+    ctx.quadraticCurveTo(x + w, y, x + w, y + rr);
+    ctx.lineTo(x + w, y + h - rr);
+    ctx.quadraticCurveTo(x + w, y + h, x + w - rr, y + h);
+    ctx.lineTo(x + rr, y + h);
+    ctx.quadraticCurveTo(x, y + h, x, y + h - rr);
+    ctx.lineTo(x, y + rr);
+    ctx.quadraticCurveTo(x, y, x + rr, y);
+    ctx.closePath();
+    ctx.fill();
+}
+
+function drawBaseRing(){
+    ctx.beginPath();
+    ctx.lineWidth = 12;
+    ctx.strokeStyle = "#2d3b4f";
+    ctx.lineCap = "butt";
+    ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+    ctx.stroke();
+}
+
+function drawGame1(){
+    drawBaseRing();
+
+    ctx.beginPath();
+    ctx.lineWidth = 12;
+    ctx.strokeStyle = GAME1.zoneColor;
+    ctx.lineCap = "butt";
+    ctx.arc(cx, cy, radius, zoneAngle, zoneAngle + zoneSize);
+    ctx.stroke();
+
+    const inner = radius - 4;
+    const outer = radius + 7;
+
+    const x1 = cx + Math.cos(tickAngle) * inner;
+    const y1 = cy + Math.sin(tickAngle) * inner;
+    const x2 = cx + Math.cos(tickAngle) * outer;
+    const y2 = cy + Math.sin(tickAngle) * outer;
+
+    ctx.beginPath();
+    ctx.lineWidth = 3;
+    ctx.strokeStyle = GAME1.pointerColor;
+    ctx.moveTo(x1, y1);
+    ctx.lineTo(x2, y2);
+    ctx.stroke();
+
+    ctx.fillStyle = "#2d3b4f";
+    fillRoundRect(cx - 14, cy - 14, 28, 28, 6);
+
+    ctx.fillStyle = "white";
+    ctx.font = "bold 18px Arial";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText(GAME1.currentKey, cx, cy + 1);
+}
+
+function drawGame2(){
+    drawBaseRing();
+
+    // white sweep
+    ctx.beginPath();
+    ctx.lineWidth = 12;
+    ctx.strokeStyle = "rgba(255,255,255,0.95)";
+    ctx.lineCap = "butt";
+    ctx.arc(cx, cy, radius, -Math.PI / 2, GAME2.sweepAngle);
+    ctx.stroke();
+
+    // green target
+    ctx.beginPath();
+    ctx.lineWidth = 12;
+    ctx.strokeStyle = GAME2.zoneColor;
+    ctx.lineCap = "butt";
+    ctx.arc(cx, cy, radius, GAME2.greenAngle, GAME2.greenAngle + GAME2.greenSize);
+    ctx.stroke();
+
+    // center big number
+    ctx.fillStyle = "white";
+    ctx.font = "bold 64px Arial";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText(GAME2.currentKey, cx, cy + 2);
+}
+
+function draw(){
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    if(gameMode === MODE_WASD){
+        drawGame1();
+    } else {
+        drawGame2();
+    }
+}
+
+function updateStats(){
+    const total = statHit + statMiss;
+    const acc = total ? (statHit * 100 / total) : 0;
+    statHitEl.textContent = `Hit: ${statHit}`;
+    statMissEl.textContent = `Miss: ${statMiss}`;
+    statAccEl.textContent = `Accuracy: ${acc.toFixed(2)}%`;
+    statStreakEl.textContent = `Streak: ${statStreak}`;
+    statBestEl.textContent = `Best Streak: ${statBest}`;
+    statLastEl.textContent = `Last Offset: ${statLastOffset === null ? "-" : `${statLastOffset.toFixed(2)}°`}`;
+    reportSummaryEl.textContent = `Total: ${total} | Hit: ${statHit} | Miss: ${statMiss}`;
+    reportBoxEl.value = attempts.join("\n");
+}
+
+function appendAttempt(req, press, hit, offsetDeg){
+    statLastOffset = offsetDeg;
+    if(hit){
+        statHit++;
+        statStreak++;
+        statBest = Math.max(statBest, statStreak);
+    } else {
+        statMiss++;
+        statStreak = 0;
+    }
+
+    const ts = new Date().toLocaleTimeString();
+    attempts.push(`[${ts}] mode=${gameMode === 0 ? "WASD" : GAME2.name} req=${req} press=${press} ${hit ? "HIT" : "MISS"} offset=${offsetDeg.toFixed(2)}°`);
+    if(attempts.length > 300) attempts.shift();
+
+    updateStats();
+}
+
+function handleAttemptGame1(pressKey){
+    if(!GAME1.keys.includes(pressKey)) return;
+
+    const offset = angleDiff(tickAngle, zoneAngle + zoneCenterOffset);
+    const offsetDeg = radToDeg(offset);
+    const hit = pressKey === GAME1.currentKey && offset < hitWindow;
+
+    appendAttempt(GAME1.currentKey, pressKey, hit, offsetDeg);
+    tickAngle = START_ANGLE;
+    game1RoundStart = START_ANGLE;
+
+    GAME1.currentKey = randomFromSetExcept(GAME1.keys, GAME1.currentKey);
+    zoneAngle = randomZone();
+}
+
+function handleAttemptGame2(pressKey){
+    if(!GAME2.keys.includes(pressKey)) return;
+
+    const sweepTip = GAME2.sweepAngle;
+    const greenCenter = GAME2.greenAngle + GAME2.greenSize / 2;
+
+    const offset = angleDiff(sweepTip, greenCenter);
+    const offsetDeg = radToDeg(offset);
+
+    const hit = pressKey === GAME2.currentKey && offset < 0.22;
+
+    appendAttempt(GAME2.currentKey, pressKey, hit, offsetDeg);
+    GAME2.sweepAngle = START_ANGLE;
+
+    GAME2.currentKey = randomFromSetExcept(GAME2.keys, GAME2.currentKey);
+    GAME2.greenAngle = randomZone();
+}
+
+document.addEventListener("keydown", (e) => {
+    const key = e.key.toUpperCase();
+
+    if(e.key === "Tab"){
+        e.preventDefault();
+        gameMode = gameMode === MODE_WASD ? MODE_1234 : MODE_WASD;
+        modeText.textContent = `Current: ${gameMode === MODE_WASD ? GAME1.name : GAME2.name}`;
+        return;
+    }
+
+    if(gameMode === MODE_WASD){
+        handleAttemptGame1(key);
+    } else {
+        handleAttemptGame2(key);
+    }
+});
+
+copyReportBtn.addEventListener("click", async () => {
+    try{
+        await navigator.clipboard.writeText(reportBoxEl.value || "");
+    } catch (_) {}
+});
+
+copyCsvBtn.addEventListener("click", async () => {
+    const rows = ["mode,required,pressed,result,offset_deg,time"];
+    for(const line of attempts){
+        const m = line.match(/^\[(.*?)\] mode=(\w+) req=(.*?) press=(.*?) (HIT|MISS) offset=([\d.]+)°$/);
+        if(m){
+            rows.push(`${m[2]},${m[3]},${m[4]},${m[5]},${m[6]},"${m[1]}"`);
+        }
+    }
+    try{
+        await navigator.clipboard.writeText(rows.join("\n"));
+    } catch (_) {}
+});
+
+clearReportBtn.addEventListener("click", () => {
+    statHit = 0;
+    statMiss = 0;
+    statStreak = 0;
+    statBest = 0;
+    statLastOffset = null;
+    attempts.length = 0;
+    updateStats();
+});
+
+function update(){
+    if(gameMode === MODE_WASD){
+        tickAngle += speed;
+        if((tickAngle - game1RoundStart) >= FULL_TURN){
+            appendAttempt(GAME1.currentKey, TIMEOUT_PRESS, false, 180.0);
+            tickAngle = START_ANGLE;
+            game1RoundStart = START_ANGLE;
+            GAME1.currentKey = randomFromSetExcept(GAME1.keys, GAME1.currentKey);
+            zoneAngle = randomZone();
+        }
+    } else {
+        GAME2.sweepAngle += GAME2.sweepSpeed;
+
+        if(GAME2.sweepAngle >= (START_ANGLE + FULL_TURN)){
+            appendAttempt(GAME2.currentKey, TIMEOUT_PRESS, false, 180.0);
+            GAME2.sweepAngle = START_ANGLE;
+            GAME2.currentKey = randomFromSetExcept(GAME2.keys, GAME2.currentKey);
+            GAME2.greenAngle = randomZone();
+        }
+    }
+
+    draw();
+    requestAnimationFrame(update);
+}
+
+modeText.textContent = "Current: WASD";
+GAME1.currentKey = randomFromSet(GAME1.keys);
+GAME2.currentKey = randomFromSet(GAME2.keys);
+tickAngle = START_ANGLE;
+GAME2.sweepAngle = START_ANGLE;
+game1RoundStart = START_ANGLE;
+updateStats();
+draw();
+update();
+</script>
+</body>
+</html>

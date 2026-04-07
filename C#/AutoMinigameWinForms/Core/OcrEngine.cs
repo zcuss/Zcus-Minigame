@@ -77,8 +77,8 @@ public sealed class OcrEngine : IDisposable
         Cv2.BitwiseOr(white, adaptive, white);
 
         using var kernel = Cv2.GetStructuringElement(MorphShapes.Rect, new OpenCvSharp.Size(2, 2));
+        Cv2.MorphologyEx(white, white, MorphTypes.Open, kernel, iterations: 1);
         Cv2.MorphologyEx(white, white, MorphTypes.Close, kernel, iterations: 1);
-        Cv2.Dilate(white, white, kernel, iterations: 1);
 
         Cv2.FindContours(white, out Point[][] contours, out _, RetrievalModes.External, ContourApproximationModes.ApproxSimple);
         if (contours.Length == 0)
@@ -87,7 +87,7 @@ public sealed class OcrEngine : IDisposable
         }
 
         var valid = contours
-            .Where(c => Cv2.ContourArea(c) >= 12.0)
+            .Where(c => Cv2.ContourArea(c) >= 6.0)
             .OrderByDescending(c => Cv2.ContourArea(c))
             .Take(8)
             .ToArray();
