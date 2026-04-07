@@ -176,10 +176,16 @@ public sealed class OcrEngine : IDisposable
         var ranked = scores.OrderByDescending(x => x.score).ToList();
         var bestKey = ranked[0].key;
         var bestScore = ranked[0].score;
-        var dbg = $"{debugPrefix} " + string.Join(' ', ranked.Take(3).Select(x => $"{x.key}:{x.score:0.00}"));
+        var secondScore = ranked.Count > 1 ? ranked[1].score : 0.0;
+        var margin = bestScore - secondScore;
+        var dbg = $"{debugPrefix} m:{margin:0.00} " + string.Join(' ', ranked.Take(3).Select(x => $"{x.key}:{x.score:0.00}"));
 
-        // Always return best candidate key for runtime visibility.
-        // Press logic still gates by OcrMinScore in MainForm.
+        // Prevent constant false-positive key lock (e.g. always 'W') when candidates are too close.
+        if (bestScore < AppConstants.OcrMinScore || margin < AppConstants.OcrMinMargin)
+        {
+            return new OcrResult(null, bestScore, dbg, new Rect(x1, y1, x2 - x1, y2 - y1));
+        }
+
         return new OcrResult(bestKey, bestScore, dbg, new Rect(x1, y1, x2 - x1, y2 - y1));
     }
 
