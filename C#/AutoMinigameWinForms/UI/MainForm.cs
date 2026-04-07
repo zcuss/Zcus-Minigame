@@ -1450,12 +1450,10 @@ public sealed class MainForm : Form
             result.Overlap &&
             isTimingOk &&
             isKeyOk &&
-            !ocr.IsAmbiguous &&
             score >= _ocrMinScore &&
-            margin >= _ocrMinMargin &&
-            _ocrSameKeyStreak >= 2 &&
+            _ocrSameKeyStreak >= 1 &&
             _pressArmed &&
-            (now - _lastPress) >= 0.09;
+            (now - _lastPress) >= 0.04;
 
         _statusLabel.Text = _scanning
             ? "Status: Tracking..."
