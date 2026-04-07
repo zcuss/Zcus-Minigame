@@ -70,82 +70,52 @@ public sealed class OcrEngine : IDisposable
             white
         );
 
-        // Remove red/blue ring/needle noise from OCR candidates.
-        using var red1Noise = new Mat();
-        using var red2Noise = new Mat();
-        using var blueNoise = new Mat();
-        Cv2.InRange(hsv, new Scalar(0, 120, 70), new Scalar(10, 255, 255), red1Noise);
-        Cv2.InRange(hsv, new Scalar(170, 120, 70), new Scalar(180, 255, 255), red2Noise);
-        Cv2.InRange(hsv, new Scalar(90, 110, 80), new Scalar(130, 255, 255), blueNoise);
-        using var colorNoise = new Mat();
-        using var redNoise = new Mat();
-        Cv2.BitwiseOr(red1Noise, red2Noise, redNoise);
-        Cv2.BitwiseOr(redNoise, blueNoise, colorNoise);
-        using var noiseKernel = Cv2.GetStructuringElement(MorphShapes.Rect, new OpenCvSharp.Size(2, 2));
-        Cv2.Dilate(colorNoise, colorNoise, noiseKernel, iterations: 1);
-        using var colorKeep = new Mat();
-        Cv2.BitwiseNot(colorNoise, colorKeep);
-
         using var gray = new Mat();
         Cv2.CvtColor(crop, gray, ColorConversionCodes.BGR2GRAY);
         using var bright = new Mat();
         Cv2.Threshold(gray, bright, 145, 255, ThresholdTypes.Binary);
         Cv2.BitwiseOr(white, bright, white);
-        using var adaptive = new Mat();
-        Cv2.AdaptiveThreshold(gray, adaptive, 255, AdaptiveThresholdTypes.GaussianC, ThresholdTypes.Binary, 11, 2);
-        Cv2.BitwiseOr(white, adaptive, white);
-        Cv2.BitwiseAnd(white, colorKeep, white);
-
-        // Mask center crosshair/needle dot projected into OCR crop.
-        var chX = scanCenter.X - x1;
-        var chY = scanCenter.Y - y1;
-        if (chX >= 0 && chY >= 0 && chX < (x2 - x1) && chY < (y2 - y1))
-        {
-            Cv2.Circle(white, new Point(chX, chY), AppConstants.OcrCrosshairMaskRadius, Scalar.Black, -1);
-            Cv2.Circle(white, new Point(chX, chY), AppConstants.OcrNeedleMaskRadius, Scalar.Black, -1);
-        }
 
         using var kernel = Cv2.GetStructuringElement(MorphShapes.Rect, new OpenCvSharp.Size(2, 2));
-        Cv2.MorphologyEx(white, white, MorphTypes.Open, kernel, iterations: 1);
         Cv2.MorphologyEx(white, white, MorphTypes.Close, kernel, iterations: 1);
+        Cv2.Dilate(white, white, kernel, iterations: 1);
 
         Cv2.FindContours(white, out Point[][] contours, out _, RetrievalModes.External, ContourApproximationModes.ApproxSimple);
+        if (contours.Length == 0)
+        {
+            return new OcrResult(null, 0.0, "w:0.00 a:0.00", new Rect(x1, y1, x2 - x1, y2 - y1));
+        }
+
         var valid = contours
-            .Where(c => Cv2.ContourArea(c) >= 6.0)
+            .Where(c => Cv2.ContourArea(c) >= 12.0)
             .OrderByDescending(c => Cv2.ContourArea(c))
             .Take(8)
             .ToArray();
 
-        Rect roiRect;
-        var debugPrefix = "cnt";
-        if (valid.Length > 0)
+        if (valid.Length == 0)
         {
-            var bx = int.MaxValue;
-            var by = int.MaxValue;
-            var ex = int.MinValue;
-            var ey = int.MinValue;
-
-            foreach (var cnt in valid)
-            {
-                var rect = Cv2.BoundingRect(cnt);
-                bx = Math.Min(bx, rect.X);
-                by = Math.Min(by, rect.Y);
-                ex = Math.Max(ex, rect.Right);
-                ey = Math.Max(ey, rect.Bottom);
-            }
-
-            bx = Math.Max(0, bx);
-            by = Math.Max(0, by);
-            ex = Math.Min(white.Cols, ex);
-            ey = Math.Min(white.Rows, ey);
-            roiRect = new Rect(bx, by, Math.Max(1, ex - bx), Math.Max(1, ey - by));
+            return new OcrResult(null, 0.0, "w:0.00 a:0.00", new Rect(x1, y1, x2 - x1, y2 - y1));
         }
-        else
+
+        var bx = int.MaxValue;
+        var by = int.MaxValue;
+        var ex = int.MinValue;
+        var ey = int.MinValue;
+
+        foreach (var cnt in valid)
         {
-            // Fallback: still try OCR over full box when contouring fails.
-            roiRect = new Rect(0, 0, Math.Max(1, white.Cols), Math.Max(1, white.Rows));
-            debugPrefix = "full";
+            var rect = Cv2.BoundingRect(cnt);
+            bx = Math.Min(bx, rect.X);
+            by = Math.Min(by, rect.Y);
+            ex = Math.Max(ex, rect.Right);
+            ey = Math.Max(ey, rect.Bottom);
         }
+
+        bx = Math.Max(0, bx);
+        by = Math.Max(0, by);
+        ex = Math.Min(white.Cols, ex);
+        ey = Math.Min(white.Rows, ey);
+        var roiRect = new Rect(bx, by, Math.Max(1, ex - bx), Math.Max(1, ey - by));
 
         using var roi = new Mat(white, roiRect);
         if (roi.Empty())
@@ -208,7 +178,7 @@ public sealed class OcrEngine : IDisposable
         var secondScore = ranked.Count > 1 ? ranked[1].score : 0.0;
         var margin = bestScore - secondScore;
         var ambiguous = margin < minMargin;
-        var dbg = $"{debugPrefix} m:{margin:0.00}{(ambiguous ? " amb" : string.Empty)} " + string.Join(' ', ranked.Take(3).Select(x => $"{x.key}:{x.score:0.00}"));
+        var dbg = string.Join(' ', ranked.Take(3).Select(x => $"{x.key}:{x.score:0.00}"));
 
         if (bestScore < minScore)
         {
