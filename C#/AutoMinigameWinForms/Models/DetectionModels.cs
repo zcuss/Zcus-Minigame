@@ -22,6 +22,12 @@ public sealed class DetectionResult : IDisposable
     }
 }
 
-public readonly record struct OcrResult(string? Key, double Score, string Debug, Rect Box);
+public readonly record struct OcrResult(
+    string? Key,
+    double Score,
+    string Debug,
+    Rect Box,
+    double Margin = 0.0,
+    bool IsAmbiguous = false);
 
 

@@ -178,15 +178,16 @@ public sealed class OcrEngine : IDisposable
         var bestScore = ranked[0].score;
         var secondScore = ranked.Count > 1 ? ranked[1].score : 0.0;
         var margin = bestScore - secondScore;
-        var dbg = $"{debugPrefix} m:{margin:0.00} " + string.Join(' ', ranked.Take(3).Select(x => $"{x.key}:{x.score:0.00}"));
+        var ambiguous = margin < AppConstants.OcrMinMargin;
+        var dbg = $"{debugPrefix} m:{margin:0.00}{(ambiguous ? " amb" : string.Empty)} " + string.Join(' ', ranked.Take(3).Select(x => $"{x.key}:{x.score:0.00}"));
 
         // Prevent constant false-positive key lock (e.g. always 'W') when candidates are too close.
-        if (bestScore < AppConstants.OcrMinScore || margin < AppConstants.OcrMinMargin)
+        if (bestScore < AppConstants.OcrMinScore)
         {
-            return new OcrResult(null, bestScore, dbg, new Rect(x1, y1, x2 - x1, y2 - y1));
+            return new OcrResult(null, bestScore, dbg, new Rect(x1, y1, x2 - x1, y2 - y1), margin, true);
         }
 
-        return new OcrResult(bestKey, bestScore, dbg, new Rect(x1, y1, x2 - x1, y2 - y1));
+        return new OcrResult(bestKey, bestScore, dbg, new Rect(x1, y1, x2 - x1, y2 - y1), margin, ambiguous);
     }
 
     private static Dictionary<string, List<Mat>> DrawLineTemplates(int size)

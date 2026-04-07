@@ -1356,7 +1356,7 @@ public sealed class MainForm : Form
             );
 
             _lastOcr = ocrNow;
-            if (IsAllowedAndMapped(ocrNow.Key, allowedKeys))
+            if (!ocrNow.IsAmbiguous && IsAllowedAndMapped(ocrNow.Key, allowedKeys))
             {
                 _lastValidOcr = ocrNow;
                 _lastValidOcrMs = nowMs;
@@ -1369,16 +1369,17 @@ public sealed class MainForm : Form
 
         var key = ocr.Key;
         var score = ocr.Score;
+        var margin = ocr.Margin;
         var dbg = ocr.Debug;
         var ocrBox = ocr.Box;
 
         var redAngleText = result.RedAngle.HasValue ? result.RedAngle.Value.ToString("0.0") : "-";
         var diffText = result.BestDiff.HasValue ? result.BestDiff.Value.ToString("0.0") : "-";
         _detailLabel.Text =
-            $"red={redAngleText} blue={result.BlueAngles.Count} diff={diffText} overlap={(result.Overlap ? "Y" : "N")} mode={mode} key={key ?? "-"}({score:0.00}) {dbg}";
+            $"red={redAngleText} blue={result.BlueAngles.Count} diff={diffText} overlap={(result.Overlap ? "Y" : "N")} mode={mode} key={key ?? "-"}({score:0.00}) m={margin:0.00} {dbg}";
 
         var strictDiffLimit = Math.Min(AppConstants.PressStrictMaxDiffDeg, _cfg.AngleToleranceDeg * AppConstants.PressStrictTolRatio);
-        var isKeyOk = IsAllowedAndMapped(key, allowedKeys);
+        var isKeyOk = !ocr.IsAmbiguous && IsAllowedAndMapped(key, allowedKeys);
         var isTimingOk = result.BestDiff.HasValue && result.BestDiff.Value <= strictDiffLimit;
         var isStableFrame = result.Overlap && isKeyOk && score >= AppConstants.OcrMinScore;
 
@@ -1414,7 +1415,7 @@ public sealed class MainForm : Form
         if (_debugAllLogs && (nowMs - _lastOcrDebugLogMs) >= 250)
         {
             AppendLog(
-                $"OCR dbg | mode={mode} overlap={(result.Overlap ? "Y" : "N")} key={(key ?? "-").ToUpperInvariant()} score={score:0.000} diff={diffText} | {dbg}");
+                $"OCR dbg | mode={mode} overlap={(result.Overlap ? "Y" : "N")} key={(key ?? "-").ToUpperInvariant()} score={score:0.000} m={margin:0.000} amb={(ocr.IsAmbiguous ? "Y" : "N")} diff={diffText} | {dbg}");
             _lastOcrDebugLogMs = nowMs;
         }
 
