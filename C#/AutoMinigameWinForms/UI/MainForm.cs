@@ -91,6 +91,7 @@ public sealed class MainForm : Form
     private NumericUpDown _spMiniH = null!;
     private Button _btnStart = null!;
     private Button _btnCapture = null!;
+    private Button _btnDebugLogs = null!;
     private CheckBox _chkAlwaysOnTop = null!;
     private ComboBox _cbStartHotkey = null!;
     private ComboBox _cbHotkeyModifier = null!;
@@ -388,6 +389,21 @@ public sealed class MainForm : Form
         StyleButton(_btnCapture, ButtonTone.Secondary);
         _btnCapture.Click += (_, _) => ToggleCapturePreview();
 
+        _btnDebugLogs = new Button
+        {
+            Text = _debugAllLogs ? "Debug: ON" : "Debug: OFF",
+            AutoSize = true,
+            Padding = new Padding(8, 6, 8, 6),
+        };
+        StyleButton(_btnDebugLogs, ButtonTone.Secondary);
+        _btnDebugLogs.Click += (_, _) =>
+        {
+            _debugAllLogs = !_debugAllLogs;
+            _btnDebugLogs.Text = _debugAllLogs ? "Debug: ON" : "Debug: OFF";
+            _cbDebugLogs.SelectedItem = _debugAllLogs ? "ON" : "OFF";
+            AppendLog($"Debug logs: {(_debugAllLogs ? "ON" : "OFF")}");
+        };
+
         _chkAlwaysOnTop = new CheckBox
         {
             Text = "Always On Top",
@@ -429,6 +445,7 @@ public sealed class MainForm : Form
 
         _btnStart.Dock = DockStyle.Fill;
         _btnCapture.Dock = DockStyle.Fill;
+        _btnDebugLogs.Dock = DockStyle.Fill;
         _chkAlwaysOnTop.Dock = DockStyle.Fill;
         btnSaveCfg.Dock = DockStyle.Fill;
         btnLoadCfg.Dock = DockStyle.Fill;
@@ -437,7 +454,8 @@ public sealed class MainForm : Form
 
         actionBar.Controls.Add(_btnStart, 0, 0);
         actionBar.Controls.Add(_btnCapture, 1, 0);
-        actionBar.Controls.Add(_chkAlwaysOnTop, 2, 0);
+        actionBar.Controls.Add(_btnDebugLogs, 2, 0);
+        actionBar.Controls.Add(_chkAlwaysOnTop, 3, 0);
         actionBar.Controls.Add(btnSaveCfg, 0, 1);
         actionBar.Controls.Add(btnLoadCfg, 1, 1);
         actionBar.Controls.Add(btnCopy, 2, 1);
@@ -1096,6 +1114,10 @@ public sealed class MainForm : Form
         _lastWindowTitle = _cfg.WindowTitle;
         _debugAllLogs = cfg.DebugAllLogs;
         _cbDebugLogs.SelectedItem = _debugAllLogs ? "ON" : "OFF";
+        if (_btnDebugLogs is not null)
+        {
+            _btnDebugLogs.Text = _debugAllLogs ? "Debug: ON" : "Debug: OFF";
+        }
         _chkAlwaysOnTop.Checked = cfg.AlwaysOnTop;
         ApplyAlwaysOnTop(cfg.AlwaysOnTop);
         var hotkeyModifier = string.IsNullOrWhiteSpace(cfg.StartHotkeyModifier) ? AppConstants.DefaultStartHotkeyModifier : cfg.StartHotkeyModifier;
