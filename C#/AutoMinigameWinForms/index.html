@@ -42,6 +42,22 @@
         color:#b8d1ff;
     }
 
+    .ctrl-actions{
+        display:flex;
+        gap:6px;
+        margin-top:8px;
+    }
+
+    .ctrl-actions button{
+        border:1px solid #4f73c2;
+        background:#122544;
+        color:#eaf3ff;
+        border-radius:4px;
+        padding:4px 8px;
+        cursor:pointer;
+        font-size:12px;
+    }
+
     .log-panel{
         position:fixed;
         right:14px;
@@ -96,6 +112,13 @@
     <div id="stat-streak">Streak: 0</div>
     <div id="stat-best">Best Streak: 0</div>
     <div id="stat-last">Last Offset: -</div>
+    <div id="runState">State: Stopped</div>
+    <div id="reqKey">Required: -</div>
+    <div id="lastPress">Last Press: -</div>
+    <div class="ctrl-actions">
+        <button id="startBtn">Start</button>
+        <button id="stopBtn">Stop</button>
+    </div>
 </div>
 
 <div class="log-panel">
@@ -110,7 +133,7 @@
 </div>
 <div class="hud" style="top:auto;bottom:14px;">
     <div class="title">Mode</div>
-    <div>Press TAB â†’ Switch Game</div>
+    <div>Press TAB to switch game</div>
     <div id="modeText">Current: WASD</div>
 </div>
 <canvas id="game" width="180" height="180"></canvas>
@@ -165,6 +188,8 @@ let statMiss = 0;
 let statStreak = 0;
 let statBest = 0;
 let statLastOffset = null;
+let isRunning = false;
+let lastPressedKey = "-";
 const attempts = [];
 
 const statHitEl = document.getElementById("stat-hit");
@@ -173,11 +198,16 @@ const statAccEl = document.getElementById("stat-acc");
 const statStreakEl = document.getElementById("stat-streak");
 const statBestEl = document.getElementById("stat-best");
 const statLastEl = document.getElementById("stat-last");
+const runStateEl = document.getElementById("runState");
+const reqKeyEl = document.getElementById("reqKey");
+const lastPressEl = document.getElementById("lastPress");
 const reportSummaryEl = document.getElementById("reportSummary");
 const reportBoxEl = document.getElementById("reportBox");
 const copyReportBtn = document.getElementById("copyReportBtn");
 const copyCsvBtn = document.getElementById("copyCsvBtn");
 const clearReportBtn = document.getElementById("clearReportBtn");
+const startBtn = document.getElementById("startBtn");
+const stopBtn = document.getElementById("stopBtn");
 
 function randomFromSet(arr){
     return arr[Math.floor(Math.random() * arr.length)];
@@ -310,8 +340,17 @@ function updateStats(){
     statStreakEl.textContent = `Streak: ${statStreak}`;
     statBestEl.textContent = `Best Streak: ${statBest}`;
     statLastEl.textContent = `Last Offset: ${statLastOffset === null ? "-" : `${statLastOffset.toFixed(2)}°`}`;
+    runStateEl.textContent = `State: ${isRunning ? "Running" : "Stopped"}`;
+    reqKeyEl.textContent = `Required: ${gameMode === MODE_WASD ? GAME1.currentKey : GAME2.currentKey}`;
+    lastPressEl.textContent = `Last Press: ${lastPressedKey}`;
     reportSummaryEl.textContent = `Total: ${total} | Hit: ${statHit} | Miss: ${statMiss}`;
     reportBoxEl.value = attempts.join("\n");
+}
+
+function appendInfo(text){
+    const ts = new Date().toLocaleTimeString();
+    attempts.push(`[${ts}] INFO ${text}`);
+    if(attempts.length > 300) attempts.shift();
 }
 
 function appendAttempt(req, press, hit, offsetDeg){
@@ -334,6 +373,7 @@ function appendAttempt(req, press, hit, offsetDeg){
 
 function handleAttemptGame1(pressKey){
     if(!GAME1.keys.includes(pressKey)) return;
+    lastPressedKey = pressKey;
 
     const offset = angleDiff(tickAngle, zoneAngle + zoneCenterOffset);
     const offsetDeg = radToDeg(offset);
@@ -345,10 +385,12 @@ function handleAttemptGame1(pressKey){
 
     GAME1.currentKey = randomFromSetExcept(GAME1.keys, GAME1.currentKey);
     zoneAngle = randomZone();
+    appendInfo(`mode=${GAME1.name} required=${GAME1.currentKey}`);
 }
 
 function handleAttemptGame2(pressKey){
     if(!GAME2.keys.includes(pressKey)) return;
+    lastPressedKey = pressKey;
 
     const sweepTip = GAME2.sweepAngle;
     const greenCenter = GAME2.greenAngle + GAME2.greenSize / 2;
@@ -363,6 +405,7 @@ function handleAttemptGame2(pressKey){
 
     GAME2.currentKey = randomFromSetExcept(GAME2.keys, GAME2.currentKey);
     GAME2.greenAngle = randomZone();
+    appendInfo(`mode=${GAME2.name} required=${GAME2.currentKey}`);
 }
 
 document.addEventListener("keydown", (e) => {
@@ -372,6 +415,11 @@ document.addEventListener("keydown", (e) => {
         e.preventDefault();
         gameMode = gameMode === MODE_WASD ? MODE_1234 : MODE_WASD;
         modeText.textContent = `Current: ${gameMode === MODE_WASD ? GAME1.name : GAME2.name}`;
+        updateStats();
+        return;
+    }
+
+    if(!isRunning){
         return;
     }
 
@@ -407,28 +455,47 @@ clearReportBtn.addEventListener("click", () => {
     statStreak = 0;
     statBest = 0;
     statLastOffset = null;
+    lastPressedKey = "-";
     attempts.length = 0;
     updateStats();
 });
 
-function update(){
-    if(gameMode === MODE_WASD){
-        tickAngle += speed;
-        if((tickAngle - game1RoundStart) >= FULL_TURN){
-            appendAttempt(GAME1.currentKey, TIMEOUT_PRESS, false, 180.0);
-            tickAngle = START_ANGLE;
-            game1RoundStart = START_ANGLE;
-            GAME1.currentKey = randomFromSetExcept(GAME1.keys, GAME1.currentKey);
-            zoneAngle = randomZone();
-        }
-    } else {
-        GAME2.sweepAngle += GAME2.sweepSpeed;
+startBtn.addEventListener("click", () => {
+    if(isRunning) return;
+    isRunning = true;
+    appendInfo(`START mode=${gameMode === MODE_WASD ? GAME1.name : GAME2.name} required=${gameMode === MODE_WASD ? GAME1.currentKey : GAME2.currentKey}`);
+    updateStats();
+});
 
-        if(GAME2.sweepAngle >= (START_ANGLE + FULL_TURN)){
-            appendAttempt(GAME2.currentKey, TIMEOUT_PRESS, false, 180.0);
-            GAME2.sweepAngle = START_ANGLE;
-            GAME2.currentKey = randomFromSetExcept(GAME2.keys, GAME2.currentKey);
-            GAME2.greenAngle = randomZone();
+stopBtn.addEventListener("click", () => {
+    if(!isRunning) return;
+    isRunning = false;
+    appendInfo("STOP");
+    updateStats();
+});
+
+function update(){
+    if(isRunning){
+        if(gameMode === MODE_WASD){
+            tickAngle += speed;
+            if((tickAngle - game1RoundStart) >= FULL_TURN){
+                appendAttempt(GAME1.currentKey, TIMEOUT_PRESS, false, 180.0);
+                tickAngle = START_ANGLE;
+                game1RoundStart = START_ANGLE;
+                GAME1.currentKey = randomFromSetExcept(GAME1.keys, GAME1.currentKey);
+                zoneAngle = randomZone();
+                appendInfo(`mode=${GAME1.name} required=${GAME1.currentKey}`);
+            }
+        } else {
+            GAME2.sweepAngle += GAME2.sweepSpeed;
+
+            if(GAME2.sweepAngle >= (START_ANGLE + FULL_TURN)){
+                appendAttempt(GAME2.currentKey, TIMEOUT_PRESS, false, 180.0);
+                GAME2.sweepAngle = START_ANGLE;
+                GAME2.currentKey = randomFromSetExcept(GAME2.keys, GAME2.currentKey);
+                GAME2.greenAngle = randomZone();
+                appendInfo(`mode=${GAME2.name} required=${GAME2.currentKey}`);
+            }
         }
     }
 
@@ -442,6 +509,7 @@ GAME2.currentKey = randomFromSet(GAME2.keys);
 tickAngle = START_ANGLE;
 GAME2.sweepAngle = START_ANGLE;
 game1RoundStart = START_ANGLE;
+appendInfo(`READY mode=${GAME1.name} required=${GAME1.currentKey}`);
 updateStats();
 draw();
 update();

@@ -58,6 +58,7 @@ public sealed class MainForm : Form
     private bool _usingFallbackRegion;
     private double _lastLicenseRevalidateAtSec;
     private double _lastOcrDebugLogMs;
+    private string _lastPressedKey = string.Empty;
 
     private int _hit;
     private Keys _startHotkey = Keys.F6;
@@ -720,6 +721,7 @@ public sealed class MainForm : Form
                 _lastOverlapSeenSec = 0;
                 _lastOcrKeyStable = string.Empty;
                 _ocrSameKeyStreak = 0;
+                _lastPressedKey = string.Empty;
                 _statusLabel.Text = "Status: Tracking...";
                 SetStartButtonStyle(true);
                 RefreshLicenseInfo();
@@ -740,6 +742,7 @@ public sealed class MainForm : Form
         _lastOverlapSeenSec = 0;
         _lastOcrKeyStable = string.Empty;
         _ocrSameKeyStreak = 0;
+        _lastPressedKey = string.Empty;
         _statusLabel.Text = "Status: Idle";
         SetStartButtonStyle(false);
         RefreshLicenseInfo();
@@ -1422,7 +1425,7 @@ public sealed class MainForm : Form
         var strictDiffLimit = Math.Min(AppConstants.PressStrictMaxDiffDeg, _cfg.AngleToleranceDeg * AppConstants.PressStrictTolRatio);
         var isKeyOk = IsAllowedAndMapped(key, allowedKeys);
         var isTimingOk = result.BestDiff.HasValue && result.BestDiff.Value <= strictDiffLimit;
-        var isStableFrame = result.Overlap && isKeyOk && score >= _ocrMinScore;
+        var isStableFrame = result.Overlap && isKeyOk && score >= _ocrMinScore && !ocr.IsAmbiguous;
 
         if (isStableFrame)
         {
@@ -1440,10 +1443,16 @@ public sealed class MainForm : Form
             }
         }
 
-        if (!result.Overlap && (now - _lastOverlapSeenSec) >= 0.06)
+        if (!result.Overlap && (now - _lastOverlapSeenSec) >= AppConstants.PressDelaySec)
         {
             _pressArmed = true;
         }
+
+        var keyToPress = AppConstants.AutoPressUseOcrKey && isKeyOk ? key?.Trim().ToUpperInvariant() : null;
+        var isSameKeyTooSoon =
+            !string.IsNullOrWhiteSpace(keyToPress) &&
+            string.Equals(_lastPressedKey, keyToPress, StringComparison.OrdinalIgnoreCase) &&
+            (now - _lastPress) < AppConstants.PressSameKeyBlockSec;
 
         var canPress =
             AppConstants.AutoPressOnOverlap &&
@@ -1451,9 +1460,12 @@ public sealed class MainForm : Form
             isTimingOk &&
             isKeyOk &&
             score >= _ocrMinScore &&
-            _ocrSameKeyStreak >= 1 &&
+            !ocr.IsAmbiguous &&
+            _ocrSameKeyStreak >= AppConstants.PressRequireStableFrames &&
+            _overlapStreak >= AppConstants.PressRequireStableFrames &&
             _pressArmed &&
-            (now - _lastPress) >= 0.04;
+            !isSameKeyTooSoon &&
+            (now - _lastPress) >= AppConstants.PressDelaySec;
 
         _statusLabel.Text = _scanning
             ? "Status: Tracking..."
@@ -1468,13 +1480,13 @@ public sealed class MainForm : Form
 
         if (canPress)
         {
-            var keyToPress = AppConstants.AutoPressUseOcrKey && isKeyOk ? key : null;
             if (!string.IsNullOrWhiteSpace(keyToPress))
             {
                 NativeInput.PressKey(keyToPress);
                 _lastPress = now;
                 _lastAttempt = now;
                 _pressArmed = false;
+                _lastPressedKey = keyToPress;
 
                 _hit++;
 
