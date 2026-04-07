@@ -46,7 +46,6 @@ public sealed class MainForm : Form
     private double _lastValidOcrMs;
     private int _overlapStreak;
     private int _clearStreak;
-    private bool _pressLatched;
     private nint? _targetHwnd;
     private Rectangle? _cachedRegion;
     private (int capX, int capY, int capW, int capH, int scanX, int scanY, int tolX10)? _lastCfgTuple;
@@ -712,7 +711,6 @@ public sealed class MainForm : Form
                 _scanning = true;
                 _overlapStreak = 0;
                 _clearStreak = 0;
-                _pressLatched = false;
                 _statusLabel.Text = "Status: Tracking...";
                 SetStartButtonStyle(true);
                 RefreshLicenseInfo();
@@ -729,7 +727,6 @@ public sealed class MainForm : Form
         _scanning = false;
         _overlapStreak = 0;
         _clearStreak = 0;
-        _pressLatched = false;
         _statusLabel.Text = "Status: Idle";
         SetStartButtonStyle(false);
         RefreshLicenseInfo();
@@ -1413,7 +1410,7 @@ public sealed class MainForm : Form
             _clearStreak++;
             if (_clearStreak >= AppConstants.PressRearmClearFrames)
             {
-                _pressLatched = false;
+                _clearStreak = 0;
             }
         }
 
