@@ -1366,10 +1366,6 @@ public sealed class MainForm : Form
         }
 
         var ocr = _lastOcr;
-        if (!IsAllowedKey(ocr.Key, allowedKeys) && (nowMs - _lastValidOcrMs) <= AppConstants.OcrHoldMs)
-        {
-            ocr = _lastValidOcr;
-        }
 
         var key = ocr.Key;
         var score = ocr.Score;
