@@ -81,56 +81,55 @@ public sealed class OcrEngine : IDisposable
         Cv2.MorphologyEx(white, white, MorphTypes.Close, kernel, iterations: 1);
 
         Cv2.FindContours(white, out Point[][] contours, out _, RetrievalModes.External, ContourApproximationModes.ApproxSimple);
-        if (contours.Length == 0)
-        {
-            return new OcrResult(null, 0.0, "w:0.00 a:0.00", new Rect(x1, y1, x2 - x1, y2 - y1));
-        }
-
         var valid = contours
             .Where(c => Cv2.ContourArea(c) >= 6.0)
             .OrderByDescending(c => Cv2.ContourArea(c))
             .Take(8)
             .ToArray();
 
-        if (valid.Length == 0)
+        Rect roiRect;
+        var debugPrefix = "cnt";
+        if (valid.Length > 0)
         {
-            return new OcrResult(null, 0.0, "w:0.00 a:0.00", new Rect(x1, y1, x2 - x1, y2 - y1));
+            var bx = int.MaxValue;
+            var by = int.MaxValue;
+            var ex = int.MinValue;
+            var ey = int.MinValue;
+
+            foreach (var cnt in valid)
+            {
+                var rect = Cv2.BoundingRect(cnt);
+                bx = Math.Min(bx, rect.X);
+                by = Math.Min(by, rect.Y);
+                ex = Math.Max(ex, rect.Right);
+                ey = Math.Max(ey, rect.Bottom);
+            }
+
+            bx = Math.Max(0, bx);
+            by = Math.Max(0, by);
+            ex = Math.Min(white.Cols, ex);
+            ey = Math.Min(white.Rows, ey);
+            roiRect = new Rect(bx, by, Math.Max(1, ex - bx), Math.Max(1, ey - by));
+        }
+        else
+        {
+            // Fallback: still try OCR over full box when contouring fails.
+            roiRect = new Rect(0, 0, Math.Max(1, white.Cols), Math.Max(1, white.Rows));
+            debugPrefix = "full";
         }
 
-        var bx = int.MaxValue;
-        var by = int.MaxValue;
-        var ex = int.MinValue;
-        var ey = int.MinValue;
-
-        foreach (var cnt in valid)
-        {
-            var rect = Cv2.BoundingRect(cnt);
-            bx = Math.Min(bx, rect.X);
-            by = Math.Min(by, rect.Y);
-            ex = Math.Max(ex, rect.Right);
-            ey = Math.Max(ey, rect.Bottom);
-        }
-
-        bx = Math.Max(0, bx);
-        by = Math.Max(0, by);
-        ex = Math.Min(white.Cols, ex);
-        ey = Math.Min(white.Rows, ey);
-
-        var bw = Math.Max(1, ex - bx);
-        var bh = Math.Max(1, ey - by);
-
-        using var roi = new Mat(white, new Rect(bx, by, bw, bh));
+        using var roi = new Mat(white, roiRect);
         if (roi.Empty())
         {
             return new OcrResult(null, 0.0, "w:0.00 a:0.00", new Rect(x1, y1, x2 - x1, y2 - y1));
         }
 
         var scale = Math.Min(
-            (AppConstants.OcrTemplateSize - 4.0) / Math.Max(1, bw),
-            (AppConstants.OcrTemplateSize - 4.0) / Math.Max(1, bh)
+            (AppConstants.OcrTemplateSize - 4.0) / Math.Max(1, roiRect.Width),
+            (AppConstants.OcrTemplateSize - 4.0) / Math.Max(1, roiRect.Height)
         );
-        var nw = Math.Max(1, (int)(bw * scale));
-        var nh = Math.Max(1, (int)(bh * scale));
+        var nw = Math.Max(1, (int)(roiRect.Width * scale));
+        var nh = Math.Max(1, (int)(roiRect.Height * scale));
 
         using var resized = new Mat();
         Cv2.Resize(roi, resized, new OpenCvSharp.Size(nw, nh), interpolation: InterpolationFlags.Nearest);
@@ -177,7 +176,7 @@ public sealed class OcrEngine : IDisposable
         var ranked = scores.OrderByDescending(x => x.score).ToList();
         var bestKey = ranked[0].key;
         var bestScore = ranked[0].score;
-        var dbg = string.Join(' ', ranked.Take(3).Select(x => $"{x.key}:{x.score:0.00}"));
+        var dbg = $"{debugPrefix} " + string.Join(' ', ranked.Take(3).Select(x => $"{x.key}:{x.score:0.00}"));
 
         if (bestScore < AppConstants.OcrMinScore)
         {
