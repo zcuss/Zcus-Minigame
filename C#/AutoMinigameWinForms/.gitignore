@@ -8,3 +8,7 @@ publish/
 # User-local files
 *.user
 *.suo
+
+# Runtime logs
+log.txt
+*.log
