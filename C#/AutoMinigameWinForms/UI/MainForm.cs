@@ -1422,10 +1422,7 @@ public sealed class MainForm : Form
             result.Overlap &&
             isTimingOk &&
             isKeyOk &&
-            score >= _ocrMinScore &&
-            (now - _lastPress) >= AppConstants.PressDelaySec &&
-            (now - _lastAttempt) >= AppConstants.AttemptIntervalSec &&
-            !_pressLatched;
+            score >= _ocrMinScore;
 
         _statusLabel.Text = _scanning
             ? "Status: Tracking..."
@@ -1446,7 +1443,6 @@ public sealed class MainForm : Form
                 NativeInput.PressKey(keyToPress);
                 _lastPress = now;
                 _lastAttempt = now;
-                _pressLatched = true;
 
                 _hit++;
 
