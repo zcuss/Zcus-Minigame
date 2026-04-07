@@ -56,6 +56,7 @@ public sealed class MainForm : Form
     private bool _usingFallbackRegion;
     private double _lastLicenseRevalidateAtSec;
     private double _lastOcrDebugLogMs;
+    private double? _lastOverlapSeenAtSec;
 
     private int _hit;
     private Keys _startHotkey = Keys.F6;
@@ -63,6 +64,7 @@ public sealed class MainForm : Form
     private bool _hotkeyRegistered;
     private bool _toggleBusy;
     private bool _isRuntimeRevalidating;
+    private bool _debugAllLogs = true;
 
     private MiniPreviewForm? _miniPreview;
     private bool _captureEnabled = true;
@@ -94,6 +96,7 @@ public sealed class MainForm : Form
     private CheckBox _chkAlwaysOnTop = null!;
     private ComboBox _cbStartHotkey = null!;
     private ComboBox _cbHotkeyModifier = null!;
+    private ComboBox _cbDebugLogs = null!;
     private TextBox _tbWindowTitle = null!;
     private TextBox _tbHotkey = null!;
 
@@ -213,6 +216,17 @@ public sealed class MainForm : Form
             DropDownStyle = ComboBoxStyle.DropDownList,
             Width = 90,
         };
+        _cbDebugLogs = new ComboBox
+        {
+            DropDownStyle = ComboBoxStyle.DropDownList,
+            Width = 90,
+        };
+        _cbDebugLogs.Items.AddRange(["ON", "OFF"]);
+        _cbDebugLogs.SelectedItem = "ON";
+        _cbDebugLogs.SelectedIndexChanged += (_, _) =>
+        {
+            _debugAllLogs = string.Equals(_cbDebugLogs.SelectedItem?.ToString(), "ON", StringComparison.OrdinalIgnoreCase);
+        };
         _cbHotkeyModifier = new ComboBox
         {
             DropDownStyle = ComboBoxStyle.DropDownList,
@@ -300,6 +314,7 @@ public sealed class MainForm : Form
         StyleSpin(_spMiniW);
         StyleSpin(_spMiniH);
         StyleCombo(_cbMode);
+        StyleCombo(_cbDebugLogs);
         StyleCombo(_cbHotkeyModifier);
         StyleCombo(_cbStartHotkey);
         StyleTextBox(_tbWindowTitle);
@@ -332,7 +347,7 @@ public sealed class MainForm : Form
         ]), 0, 0);
 
         settingsGrid.Controls.Add(CreateSettingsGroup("Scan", [
-            ("SCAN X", _spScanX), ("SCAN Y", _spScanY), ("Tol x10", _spTol), ("Mode", _cbMode), ("Keybind", _tbHotkey)
+            ("SCAN X", _spScanX), ("SCAN Y", _spScanY), ("Tol x10", _spTol), ("Mode", _cbMode), ("Debug", _cbDebugLogs), ("Keybind", _tbHotkey)
         ]), 1, 0);
 
         settingsGrid.Controls.Add(CreateSettingsGroup("OCR", [
@@ -389,7 +404,18 @@ public sealed class MainForm : Form
 
         var btnCopy = new Button { Text = "Copy Log", AutoSize = true };
         StyleButton(btnCopy, ButtonTone.Secondary);
-        btnCopy.Click += (_, _) => Clipboard.SetText(_logBox.Text);
+        btnCopy.Click += (_, _) =>
+        {
+            try
+            {
+                Clipboard.SetText(_logBox.Text ?? string.Empty);
+                AppendLog($"Log copied ({_logBox.Lines.Length} lines)");
+            }
+            catch (Exception ex)
+            {
+                AppendLog($"Copy log failed: {ex.Message}");
+            }
+        };
 
         var btnClear = new Button { Text = "Clear Log", AutoSize = true };
         StyleButton(btnClear, ButtonTone.Warn);
@@ -662,6 +688,7 @@ public sealed class MainForm : Form
                 _overlapStreak = 0;
                 _clearStreak = 0;
                 _overlapStartedAtSec = null;
+                _lastOverlapSeenAtSec = null;
                 _pressLatched = false;
                 _statusLabel.Text = "Status: Tracking...";
                 SetStartButtonStyle(true);
@@ -680,6 +707,7 @@ public sealed class MainForm : Form
         _overlapStreak = 0;
         _clearStreak = 0;
         _overlapStartedAtSec = null;
+        _lastOverlapSeenAtSec = null;
         _pressLatched = false;
         _statusLabel.Text = "Status: Idle";
         SetStartButtonStyle(false);
@@ -1031,6 +1059,7 @@ public sealed class MainForm : Form
             MiniH = (int)_spMiniH.Value,
             CaptureEnabled = _captureEnabled,
             AlwaysOnTop = _chkAlwaysOnTop.Checked,
+            DebugAllLogs = _debugAllLogs,
             StartHotkeyModifier = (_cbHotkeyModifier.SelectedItem?.ToString() ?? AppConstants.DefaultStartHotkeyModifier).Trim(),
             StartHotkey = (_cbStartHotkey.SelectedItem?.ToString() ?? AppConstants.DefaultStartHotkey).Trim(),
         };
@@ -1071,6 +1100,8 @@ public sealed class MainForm : Form
         _tbWindowTitle.Text = NormalizeWindowTitle(cfg.WindowTitle);
         _cfg.WindowTitle = NormalizeWindowTitle(cfg.WindowTitle);
         _lastWindowTitle = _cfg.WindowTitle;
+        _debugAllLogs = cfg.DebugAllLogs;
+        _cbDebugLogs.SelectedItem = _debugAllLogs ? "ON" : "OFF";
         _chkAlwaysOnTop.Checked = cfg.AlwaysOnTop;
         ApplyAlwaysOnTop(cfg.AlwaysOnTop);
         var hotkeyModifier = string.IsNullOrWhiteSpace(cfg.StartHotkeyModifier) ? AppConstants.DefaultStartHotkeyModifier : cfg.StartHotkeyModifier;
@@ -1358,10 +1389,16 @@ public sealed class MainForm : Form
         if (isOverlapReadyFrame)
         {
             _overlapStartedAtSec ??= now;
+            _lastOverlapSeenAtSec = now;
         }
         else
         {
-            _overlapStartedAtSec = null;
+            // Keep hold briefly across tiny flickers so trigger can still fire.
+            if (_lastOverlapSeenAtSec.HasValue && (now - _lastOverlapSeenAtSec.Value) > 0.35)
+            {
+                _overlapStartedAtSec = null;
+                _lastOverlapSeenAtSec = null;
+            }
         }
 
         var overlapHoldPassed = _overlapStartedAtSec.HasValue && (now - _overlapStartedAtSec.Value) >= AppConstants.OverlapHoldBeforePressSec;
@@ -1383,7 +1420,7 @@ public sealed class MainForm : Form
             ? $"Status: Tracking... hold {holdSec:0.00}/{AppConstants.OverlapHoldBeforePressSec:0.00}s"
             : "Status: Idle";
 
-        if ((nowMs - _lastOcrDebugLogMs) >= 250)
+        if (_debugAllLogs && (nowMs - _lastOcrDebugLogMs) >= 250)
         {
             AppendLog(
                 $"OCR dbg | mode={mode} overlap={(result.Overlap ? "Y" : "N")} key={(key ?? "-").ToUpperInvariant()} score={score:0.000} diff={diffText} hold={holdSec:0.00}s | {dbg}");

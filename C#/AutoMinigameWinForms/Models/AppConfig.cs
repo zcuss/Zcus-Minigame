@@ -21,6 +21,7 @@ public sealed class AppConfig
     public int MiniH { get; set; } = AppConstants.MiniGuiH;
     public bool CaptureEnabled { get; set; } = true;
     public bool AlwaysOnTop { get; set; } = false;
+    public bool DebugAllLogs { get; set; } = true;
     public string StartHotkey { get; set; } = AppConstants.DefaultStartHotkey;
     public string StartHotkeyModifier { get; set; } = AppConstants.DefaultStartHotkeyModifier;
 
