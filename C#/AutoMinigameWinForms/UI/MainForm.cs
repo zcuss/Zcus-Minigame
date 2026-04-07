@@ -46,6 +46,10 @@ public sealed class MainForm : Form
     private double _lastValidOcrMs;
     private int _overlapStreak;
     private int _clearStreak;
+    private bool _pressArmed = true;
+    private double _lastOverlapSeenSec;
+    private string _lastOcrKeyStable = string.Empty;
+    private int _ocrSameKeyStreak;
     private nint? _targetHwnd;
     private Rectangle? _cachedRegion;
     private (int capX, int capY, int capW, int capH, int scanX, int scanY, int tolX10)? _lastCfgTuple;
@@ -712,6 +716,10 @@ public sealed class MainForm : Form
                 _scanning = true;
                 _overlapStreak = 0;
                 _clearStreak = 0;
+                _pressArmed = true;
+                _lastOverlapSeenSec = 0;
+                _lastOcrKeyStable = string.Empty;
+                _ocrSameKeyStreak = 0;
                 _statusLabel.Text = "Status: Tracking...";
                 SetStartButtonStyle(true);
                 RefreshLicenseInfo();
@@ -728,6 +736,10 @@ public sealed class MainForm : Form
         _scanning = false;
         _overlapStreak = 0;
         _clearStreak = 0;
+        _pressArmed = true;
+        _lastOverlapSeenSec = 0;
+        _lastOcrKeyStable = string.Empty;
+        _ocrSameKeyStreak = 0;
         _statusLabel.Text = "Status: Idle";
         SetStartButtonStyle(false);
         RefreshLicenseInfo();
@@ -1391,6 +1403,17 @@ public sealed class MainForm : Form
         var dbg = ocr.Debug;
         var ocrBox = ocr.Box;
 
+        var normalizedKey = (key ?? string.Empty).Trim().ToUpperInvariant();
+        if (!string.IsNullOrWhiteSpace(normalizedKey) && normalizedKey == _lastOcrKeyStable)
+        {
+            _ocrSameKeyStreak++;
+        }
+        else
+        {
+            _lastOcrKeyStable = normalizedKey;
+            _ocrSameKeyStreak = string.IsNullOrWhiteSpace(normalizedKey) ? 0 : 1;
+        }
+
         var redAngleText = result.RedAngle.HasValue ? result.RedAngle.Value.ToString("0.0") : "-";
         var diffText = result.BestDiff.HasValue ? result.BestDiff.Value.ToString("0.0") : "-";
         _detailLabel.Text =
@@ -1405,6 +1428,7 @@ public sealed class MainForm : Form
         {
             _overlapStreak++;
             _clearStreak = 0;
+            _lastOverlapSeenSec = now;
         }
         else
         {
@@ -1416,12 +1440,22 @@ public sealed class MainForm : Form
             }
         }
 
+        if (!result.Overlap && (now - _lastOverlapSeenSec) >= 0.06)
+        {
+            _pressArmed = true;
+        }
+
         var canPress =
             AppConstants.AutoPressOnOverlap &&
             result.Overlap &&
             isTimingOk &&
             isKeyOk &&
-            score >= _ocrMinScore;
+            !ocr.IsAmbiguous &&
+            score >= _ocrMinScore &&
+            margin >= _ocrMinMargin &&
+            _ocrSameKeyStreak >= 2 &&
+            _pressArmed &&
+            (now - _lastPress) >= 0.09;
 
         _statusLabel.Text = _scanning
             ? "Status: Tracking..."
@@ -1442,6 +1476,7 @@ public sealed class MainForm : Form
                 NativeInput.PressKey(keyToPress);
                 _lastPress = now;
                 _lastAttempt = now;
+                _pressArmed = false;
 
                 _hit++;
 
