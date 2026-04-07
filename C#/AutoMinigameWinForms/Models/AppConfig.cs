@@ -13,6 +13,8 @@ public sealed class AppConfig
     public int OcrOffsetY { get; set; } = AppConstants.OcrOffsetY;
     public int OcrBoxW { get; set; } = AppConstants.OcrBoxW;
     public int OcrBoxH { get; set; } = AppConstants.OcrBoxH;
+    public int OcrMinScoreX100 { get; set; } = (int)Math.Round(AppConstants.OcrMinScore * 100.0);
+    public int OcrMinMarginX100 { get; set; } = (int)Math.Round(AppConstants.OcrMinMargin * 100.0);
     public int AngleToleranceX10 { get; set; } = (int)(14.5 * 10.0);
     public string OcrMode { get; set; } = AppConstants.OcrModeDefault;
     public int MiniX { get; set; } = AppConstants.MiniGuiX;

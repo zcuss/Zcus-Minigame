@@ -63,6 +63,8 @@ public sealed class MainForm : Form
     private bool _toggleBusy;
     private bool _isRuntimeRevalidating;
     private bool _debugAllLogs = true;
+    private double _ocrMinScore = AppConstants.OcrMinScore;
+    private double _ocrMinMargin = AppConstants.OcrMinMargin;
 
     private MiniPreviewForm? _miniPreview;
     private bool _captureEnabled = true;
@@ -83,6 +85,8 @@ public sealed class MainForm : Form
     private NumericUpDown _spOcrY = null!;
     private NumericUpDown _spOcrW = null!;
     private NumericUpDown _spOcrH = null!;
+    private NumericUpDown _spOcrScore = null!;
+    private NumericUpDown _spOcrMargin = null!;
     private NumericUpDown _spTol = null!;
     private ComboBox _cbMode = null!;
     private NumericUpDown _spMiniX = null!;
@@ -201,6 +205,8 @@ public sealed class MainForm : Form
         _spOcrY = NewSpin(-200, 200, AppConstants.OcrOffsetY);
         _spOcrW = NewSpin(12, 220, AppConstants.OcrBoxW);
         _spOcrH = NewSpin(12, 220, AppConstants.OcrBoxH);
+        _spOcrScore = NewSpin(0, 100, (int)Math.Round(AppConstants.OcrMinScore * 100.0));
+        _spOcrMargin = NewSpin(0, 100, (int)Math.Round(AppConstants.OcrMinMargin * 100.0));
         _spTol = NewSpin(5, 400, (int)(_cfg.AngleToleranceDeg * 10));
 
         _cbMode = new ComboBox
@@ -307,6 +313,8 @@ public sealed class MainForm : Form
         StyleSpin(_spOcrY);
         StyleSpin(_spOcrW);
         StyleSpin(_spOcrH);
+        StyleSpin(_spOcrScore);
+        StyleSpin(_spOcrMargin);
         StyleSpin(_spTol);
         StyleSpin(_spMiniX);
         StyleSpin(_spMiniY);
@@ -350,7 +358,8 @@ public sealed class MainForm : Form
         ]), 1, 0);
 
         settingsGrid.Controls.Add(CreateSettingsGroup("OCR", [
-            ("OCR X", _spOcrX), ("OCR Y", _spOcrY), ("OCR W", _spOcrW), ("OCR H", _spOcrH)
+            ("OCR X", _spOcrX), ("OCR Y", _spOcrY), ("OCR W", _spOcrW), ("OCR H", _spOcrH),
+            ("Score%", _spOcrScore), ("Margin%", _spOcrMargin)
         ]), 0, 1);
         settingsGrid.SetColumnSpan(settingsGrid.GetControlFromPosition(0, 1)!, 2);
 
@@ -986,6 +995,9 @@ public sealed class MainForm : Form
 
     private void SyncCfg()
     {
+        _ocrMinScore = Math.Clamp((double)_spOcrScore.Value / 100.0, 0.0, 1.0);
+        _ocrMinMargin = Math.Clamp((double)_spOcrMargin.Value / 100.0, 0.0, 1.0);
+
         var windowTitle = NormalizeWindowTitle(_tbWindowTitle.Text);
         if (!string.Equals(_lastWindowTitle, windowTitle, StringComparison.Ordinal))
         {
@@ -1063,6 +1075,8 @@ public sealed class MainForm : Form
             OcrOffsetY = (int)_spOcrY.Value,
             OcrBoxW = (int)_spOcrW.Value,
             OcrBoxH = (int)_spOcrH.Value,
+            OcrMinScoreX100 = (int)_spOcrScore.Value,
+            OcrMinMarginX100 = (int)_spOcrMargin.Value,
             AngleToleranceX10 = (int)_spTol.Value,
             OcrMode = (_cbMode.SelectedItem?.ToString() ?? AppConstants.OcrModeDefault).Trim(),
             MiniX = (int)_spMiniX.Value,
@@ -1089,6 +1103,8 @@ public sealed class MainForm : Form
         SetSpin(_spOcrY, cfg.OcrOffsetY);
         SetSpin(_spOcrW, cfg.OcrBoxW);
         SetSpin(_spOcrH, cfg.OcrBoxH);
+        SetSpin(_spOcrScore, cfg.OcrMinScoreX100);
+        SetSpin(_spOcrMargin, cfg.OcrMinMarginX100);
         SetSpin(_spTol, cfg.AngleToleranceX10);
 
         var mode = string.IsNullOrWhiteSpace(cfg.OcrMode) ? AppConstants.OcrModeDefault : cfg.OcrMode.ToUpperInvariant();
@@ -1353,6 +1369,8 @@ public sealed class MainForm : Form
                 (int)_spOcrY.Value,
                 (int)_spOcrW.Value,
                 (int)_spOcrH.Value,
+                _ocrMinScore,
+                _ocrMinMargin,
                 allowedKeys
             );
 
@@ -1382,7 +1400,7 @@ public sealed class MainForm : Form
         var strictDiffLimit = Math.Min(AppConstants.PressStrictMaxDiffDeg, _cfg.AngleToleranceDeg * AppConstants.PressStrictTolRatio);
         var isKeyOk = !ocr.IsAmbiguous && IsAllowedAndMapped(key, allowedKeys);
         var isTimingOk = result.BestDiff.HasValue && result.BestDiff.Value <= strictDiffLimit;
-        var isStableFrame = result.Overlap && isKeyOk && score >= AppConstants.OcrMinScore;
+        var isStableFrame = result.Overlap && isKeyOk && score >= _ocrMinScore;
 
         if (isStableFrame)
         {
@@ -1404,7 +1422,7 @@ public sealed class MainForm : Form
             result.Overlap &&
             isTimingOk &&
             isKeyOk &&
-            score >= AppConstants.OcrMinScore &&
+            score >= _ocrMinScore &&
             (now - _lastPress) >= AppConstants.PressDelaySec &&
             (now - _lastAttempt) >= AppConstants.AttemptIntervalSec &&
             !_pressLatched;
@@ -1416,7 +1434,7 @@ public sealed class MainForm : Form
         if (_debugAllLogs && (nowMs - _lastOcrDebugLogMs) >= 250)
         {
             AppendLog(
-                $"OCR dbg | mode={mode} overlap={(result.Overlap ? "Y" : "N")} key={(key ?? "-").ToUpperInvariant()} score={score:0.000} m={margin:0.000} amb={(ocr.IsAmbiguous ? "Y" : "N")} diff={diffText} | {dbg}");
+                $"OCR dbg | mode={mode} overlap={(result.Overlap ? "Y" : "N")} key={(key ?? "-").ToUpperInvariant()} score={score:0.000}/{_ocrMinScore:0.000} m={margin:0.000}/{_ocrMinMargin:0.000} amb={(ocr.IsAmbiguous ? "Y" : "N")} diff={diffText} | {dbg}");
             _lastOcrDebugLogMs = nowMs;
         }
 

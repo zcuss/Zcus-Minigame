@@ -31,6 +31,8 @@ public sealed class OcrEngine : IDisposable
         int ocrOffsetY,
         int boxW,
         int boxH,
+        double minScore,
+        double minMargin,
         IReadOnlyCollection<string>? allowedKeys = null)
     {
         var h = frameBgr.Rows;
@@ -178,11 +180,11 @@ public sealed class OcrEngine : IDisposable
         var bestScore = ranked[0].score;
         var secondScore = ranked.Count > 1 ? ranked[1].score : 0.0;
         var margin = bestScore - secondScore;
-        var ambiguous = margin < AppConstants.OcrMinMargin;
+        var ambiguous = margin < minMargin;
         var dbg = $"{debugPrefix} m:{margin:0.00}{(ambiguous ? " amb" : string.Empty)} " + string.Join(' ', ranked.Take(3).Select(x => $"{x.key}:{x.score:0.00}"));
 
         // Prevent constant false-positive key lock (e.g. always 'W') when candidates are too close.
-        if (bestScore < AppConstants.OcrMinScore)
+        if (bestScore < minScore)
         {
             return new OcrResult(null, bestScore, dbg, new Rect(x1, y1, x2 - x1, y2 - y1), margin, true);
         }
