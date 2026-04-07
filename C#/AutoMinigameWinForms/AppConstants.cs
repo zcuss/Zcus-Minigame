@@ -12,7 +12,6 @@ public static class AppConstants
     public const int OcrIntervalMs = 45;
     public const int OcrHoldMs = 220;
     public const double AttemptIntervalSec = 0.07;
-    public const double OverlapHoldBeforePressSec = 1.0;
     public const int WindowRefreshMs = 200;
 
     public const bool AutoPressOnOverlap = true;

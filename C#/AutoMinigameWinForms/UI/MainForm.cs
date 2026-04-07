@@ -47,7 +47,6 @@ public sealed class MainForm : Form
     private int _overlapStreak;
     private int _clearStreak;
     private bool _pressLatched;
-    private double? _overlapStartedAtSec;
     private nint? _targetHwnd;
     private Rectangle? _cachedRegion;
     private (int capX, int capY, int capW, int capH, int scanX, int scanY, int tolX10)? _lastCfgTuple;
@@ -56,7 +55,6 @@ public sealed class MainForm : Form
     private bool _usingFallbackRegion;
     private double _lastLicenseRevalidateAtSec;
     private double _lastOcrDebugLogMs;
-    private double? _lastOverlapSeenAtSec;
 
     private int _hit;
     private Keys _startHotkey = Keys.F6;
@@ -687,8 +685,6 @@ public sealed class MainForm : Form
                 _scanning = true;
                 _overlapStreak = 0;
                 _clearStreak = 0;
-                _overlapStartedAtSec = null;
-                _lastOverlapSeenAtSec = null;
                 _pressLatched = false;
                 _statusLabel.Text = "Status: Tracking...";
                 SetStartButtonStyle(true);
@@ -706,8 +702,6 @@ public sealed class MainForm : Form
         _scanning = false;
         _overlapStreak = 0;
         _clearStreak = 0;
-        _overlapStartedAtSec = null;
-        _lastOverlapSeenAtSec = null;
         _pressLatched = false;
         _statusLabel.Text = "Status: Idle";
         SetStartButtonStyle(false);
@@ -1369,7 +1363,6 @@ public sealed class MainForm : Form
         var isKeyOk = IsAllowedAndMapped(key, allowedKeys);
         var isTimingOk = result.BestDiff.HasValue && result.BestDiff.Value <= strictDiffLimit;
         var isStableFrame = result.Overlap && isKeyOk && score >= AppConstants.OcrMinScore;
-        var isOverlapReadyFrame = result.Overlap;
 
         if (isStableFrame)
         {
@@ -1386,28 +1379,8 @@ public sealed class MainForm : Form
             }
         }
 
-        if (isOverlapReadyFrame)
-        {
-            _overlapStartedAtSec ??= now;
-            _lastOverlapSeenAtSec = now;
-        }
-        else
-        {
-            // Keep hold briefly across tiny flickers so trigger can still fire.
-            if (_lastOverlapSeenAtSec.HasValue && (now - _lastOverlapSeenAtSec.Value) > 0.35)
-            {
-                _overlapStartedAtSec = null;
-                _lastOverlapSeenAtSec = null;
-            }
-        }
-
-        var overlapHoldPassed = _overlapStartedAtSec.HasValue && (now - _overlapStartedAtSec.Value) >= AppConstants.OverlapHoldBeforePressSec;
-
-        var holdSec = _overlapStartedAtSec.HasValue ? Math.Max(0, now - _overlapStartedAtSec.Value) : 0;
-
         var canPress =
             AppConstants.AutoPressOnOverlap &&
-            overlapHoldPassed &&
             result.Overlap &&
             isTimingOk &&
             isKeyOk &&
@@ -1417,13 +1390,13 @@ public sealed class MainForm : Form
             !_pressLatched;
 
         _statusLabel.Text = _scanning
-            ? $"Status: Tracking... hold {holdSec:0.00}/{AppConstants.OverlapHoldBeforePressSec:0.00}s"
+            ? "Status: Tracking..."
             : "Status: Idle";
 
         if (_debugAllLogs && (nowMs - _lastOcrDebugLogMs) >= 250)
         {
             AppendLog(
-                $"OCR dbg | mode={mode} overlap={(result.Overlap ? "Y" : "N")} key={(key ?? "-").ToUpperInvariant()} score={score:0.000} diff={diffText} hold={holdSec:0.00}s | {dbg}");
+                $"OCR dbg | mode={mode} overlap={(result.Overlap ? "Y" : "N")} key={(key ?? "-").ToUpperInvariant()} score={score:0.000} diff={diffText} | {dbg}");
             _lastOcrDebugLogMs = nowMs;
         }
 
@@ -1440,10 +1413,9 @@ public sealed class MainForm : Form
                 _hit++;
 
                 AppendLog(
-                    $"[{DateTime.Now:HH:mm:ss}] CLICK {keyToPress.ToUpperInvariant()} | total={_hit} score={score:0.000} diff={diffText} hold={holdSec:0.00}s");
+                    $"[{DateTime.Now:HH:mm:ss}] CLICK {keyToPress.ToUpperInvariant()} | total={_hit} score={score:0.000} diff={diffText}");
                 RefreshSummary();
                 _overlapStreak = 0;
-                _overlapStartedAtSec = null;
             }
         }
 
