@@ -26,7 +26,8 @@ public sealed class OcrEngine : IDisposable
 
     public OcrResult DetectWhiteLetterLineStyle(
         Mat frameBgr,
-        Point center,
+        Point ocrCenter,
+        Point scanCenter,
         int ocrOffsetX,
         int ocrOffsetY,
         int boxW,
@@ -39,8 +40,8 @@ public sealed class OcrEngine : IDisposable
         var w = frameBgr.Cols;
         var halfW = Math.Max(1, boxW / 2);
         var halfH = Math.Max(1, boxH / 2);
-        var cx = center.X + ocrOffsetX;
-        var cy = center.Y + ocrOffsetY;
+        var cx = ocrCenter.X + ocrOffsetX;
+        var cy = ocrCenter.Y + ocrOffsetY;
 
         var x1 = Math.Max(0, cx - halfW);
         var x2 = Math.Min(w, cx + halfW);
@@ -69,6 +70,22 @@ public sealed class OcrEngine : IDisposable
             white
         );
 
+        // Remove red/blue ring/needle noise from OCR candidates.
+        using var red1Noise = new Mat();
+        using var red2Noise = new Mat();
+        using var blueNoise = new Mat();
+        Cv2.InRange(hsv, new Scalar(0, 120, 70), new Scalar(10, 255, 255), red1Noise);
+        Cv2.InRange(hsv, new Scalar(170, 120, 70), new Scalar(180, 255, 255), red2Noise);
+        Cv2.InRange(hsv, new Scalar(90, 110, 80), new Scalar(130, 255, 255), blueNoise);
+        using var colorNoise = new Mat();
+        using var redNoise = new Mat();
+        Cv2.BitwiseOr(red1Noise, red2Noise, redNoise);
+        Cv2.BitwiseOr(redNoise, blueNoise, colorNoise);
+        using var noiseKernel = Cv2.GetStructuringElement(MorphShapes.Rect, new OpenCvSharp.Size(2, 2));
+        Cv2.Dilate(colorNoise, colorNoise, noiseKernel, iterations: 1);
+        using var colorKeep = new Mat();
+        Cv2.BitwiseNot(colorNoise, colorKeep);
+
         using var gray = new Mat();
         Cv2.CvtColor(crop, gray, ColorConversionCodes.BGR2GRAY);
         using var bright = new Mat();
@@ -77,6 +94,16 @@ public sealed class OcrEngine : IDisposable
         using var adaptive = new Mat();
         Cv2.AdaptiveThreshold(gray, adaptive, 255, AdaptiveThresholdTypes.GaussianC, ThresholdTypes.Binary, 11, 2);
         Cv2.BitwiseOr(white, adaptive, white);
+        Cv2.BitwiseAnd(white, colorKeep, white);
+
+        // Mask center crosshair/needle dot projected into OCR crop.
+        var chX = scanCenter.X - x1;
+        var chY = scanCenter.Y - y1;
+        if (chX >= 0 && chY >= 0 && chX < (x2 - x1) && chY < (y2 - y1))
+        {
+            Cv2.Circle(white, new Point(chX, chY), AppConstants.OcrCrosshairMaskRadius, Scalar.Black, -1);
+            Cv2.Circle(white, new Point(chX, chY), AppConstants.OcrNeedleMaskRadius, Scalar.Black, -1);
+        }
 
         using var kernel = Cv2.GetStructuringElement(MorphShapes.Rect, new OpenCvSharp.Size(2, 2));
         Cv2.MorphologyEx(white, white, MorphTypes.Open, kernel, iterations: 1);

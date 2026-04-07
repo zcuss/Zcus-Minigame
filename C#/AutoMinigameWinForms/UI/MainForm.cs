@@ -1362,6 +1362,7 @@ public sealed class MainForm : Form
             var ocrNow = _ocrEngine.DetectWhiteLetterLineStyle(
                 frameScan,
                 ocrAnchor,
+                result.Center,
                 (int)_spOcrX.Value,
                 (int)_spOcrY.Value,
                 (int)_spOcrW.Value,

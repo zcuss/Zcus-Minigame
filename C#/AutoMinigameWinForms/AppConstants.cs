@@ -31,6 +31,8 @@ public static class AppConstants
     public const int OcrTemplateSize = 32;
     public const double OcrMinScore = 0.03;
     public const double OcrMinMargin = 0.03;
+    public const int OcrCrosshairMaskRadius = 1;
+    public const int OcrNeedleMaskRadius = 10;
     public const string OcrModeDefault = "WASD";
 
     public const bool DrawOverlay = true;
