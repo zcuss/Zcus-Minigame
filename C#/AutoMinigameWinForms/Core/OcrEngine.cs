@@ -178,11 +178,8 @@ public sealed class OcrEngine : IDisposable
         var bestScore = ranked[0].score;
         var dbg = $"{debugPrefix} " + string.Join(' ', ranked.Take(3).Select(x => $"{x.key}:{x.score:0.00}"));
 
-        if (bestScore < AppConstants.OcrMinScore)
-        {
-            return new OcrResult(null, bestScore, dbg, new Rect(x1, y1, x2 - x1, y2 - y1));
-        }
-
+        // Always return best candidate key for runtime visibility.
+        // Press logic still gates by OcrMinScore in MainForm.
         return new OcrResult(bestKey, bestScore, dbg, new Rect(x1, y1, x2 - x1, y2 - y1));
     }
 
