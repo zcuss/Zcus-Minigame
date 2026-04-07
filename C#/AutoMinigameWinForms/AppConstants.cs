@@ -11,14 +11,14 @@ public static class AppConstants
     public const int MaxIdleRenderFps = 30;
     public const int OcrIntervalMs = 45;
     public const int OcrHoldMs = 220;
-    public const double AttemptIntervalSec = 0.11;
+    public const double AttemptIntervalSec = 0.08;
     public const int WindowRefreshMs = 200;
 
     public const bool AutoPressOnOverlap = true;
     public const bool AutoPressUseOcrKey = true;
-    public const double PressDelaySec = 0.11;
-    public const int PressRequireStableFrames = 2;
-    public const double PressStrictMaxDiffDeg = 9.0;
+    public const double PressDelaySec = 0.08;
+    public const int PressRequireStableFrames = 1;
+    public const double PressStrictMaxDiffDeg = 7.6;
     public const double PressStrictTolRatio = 0.70;
     public const int PressRearmClearFrames = 1;
 
