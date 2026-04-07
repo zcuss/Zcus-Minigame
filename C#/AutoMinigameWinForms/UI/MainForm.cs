@@ -49,6 +49,7 @@ public sealed class MainForm : Form
     private bool _pressArmed = true;
     private string _lastOcrKeyStable = string.Empty;
     private int _ocrSameKeyStreak;
+    private double? _prevFrameDiff;
     private nint? _targetHwnd;
     private Rectangle? _cachedRegion;
     private (int capX, int capY, int capW, int capH, int scanX, int scanY, int tolX10)? _lastCfgTuple;
@@ -718,6 +719,7 @@ public sealed class MainForm : Form
                 _pressArmed = true;
                 _lastOcrKeyStable = string.Empty;
                 _ocrSameKeyStreak = 0;
+                _prevFrameDiff = null;
                 _statusLabel.Text = "Status: Tracking...";
                 SetStartButtonStyle(true);
                 RefreshLicenseInfo();
@@ -737,6 +739,7 @@ public sealed class MainForm : Form
         _pressArmed = true;
         _lastOcrKeyStable = string.Empty;
         _ocrSameKeyStreak = 0;
+        _prevFrameDiff = null;
         _statusLabel.Text = "Status: Idle";
         SetStartButtonStyle(false);
         RefreshLicenseInfo();
@@ -1419,6 +1422,9 @@ public sealed class MainForm : Form
         var strictDiffLimit = Math.Min(AppConstants.PressStrictMaxDiffDeg, _cfg.AngleToleranceDeg * AppConstants.PressStrictTolRatio);
         var isKeyOk = IsAllowedAndMapped(key, allowedKeys);
         var isTimingOk = result.BestDiff.HasValue && result.BestDiff.Value <= strictDiffLimit;
+        var isApproachingCenter = !result.BestDiff.HasValue
+            || !_prevFrameDiff.HasValue
+            || result.BestDiff.Value <= (_prevFrameDiff.Value + 0.35);
         var isStableFrame = result.Overlap && isTimingOk && isKeyOk && score >= _ocrMinScore;
 
         if (isStableFrame)
@@ -1434,12 +1440,17 @@ public sealed class MainForm : Form
             {
                 _pressArmed = true;
             }
+            if (!result.Overlap)
+            {
+                _prevFrameDiff = null;
+            }
         }
         var keyToPress = AppConstants.AutoPressUseOcrKey && isKeyOk ? key?.Trim().ToUpperInvariant() : null;
 
         var canPress =
             AppConstants.AutoPressOnOverlap &&
             _overlapStreak >= AppConstants.PressRequireStableFrames &&
+            isApproachingCenter &&
             _pressArmed &&
             (now - _lastAttempt) >= AppConstants.AttemptIntervalSec &&
             (now - _lastPress) >= AppConstants.PressDelaySec;
@@ -1471,6 +1482,11 @@ public sealed class MainForm : Form
                 RefreshSummary();
                 _overlapStreak = 0;
             }
+        }
+
+        if (result.BestDiff.HasValue)
+        {
+            _prevFrameDiff = result.BestDiff.Value;
         }
 
         if (needRender)
