@@ -1434,19 +1434,24 @@ public sealed class MainForm : Form
             _ocrSameKeyStreak = string.IsNullOrWhiteSpace(normalizedKey) ? 0 : 1;
         }
         var keyStable = _ocrSameKeyStreak >= AppConstants.OcrRequireStableReads;
+        var centerDiffDeg = 999.0;
+        var hasCenterDiff = result.RedAngle.HasValue
+            && TryGetBlueArcCenterDiff(result.RedAngle.Value, result.BlueAngles, _cfg.BlueStepDeg, out centerDiffDeg);
 
         var redAngleText = result.RedAngle.HasValue ? result.RedAngle.Value.ToString("0.0") : "-";
         var diffText = result.BestDiff.HasValue ? result.BestDiff.Value.ToString("0.0") : "-";
+        var centerDiffText = hasCenterDiff ? centerDiffDeg.ToString("0.0") : "-";
         _detailLabel.Text =
-            $"red={redAngleText} blue={result.BlueAngles.Count} diff={diffText} overlap={(result.Overlap ? "Y" : "N")} mode={mode} src={(usingFallbackOcr ? "hold" : "live")} key={key ?? "-"}({score:0.00}) m={margin:0.00} st={_ocrSameKeyStreak}/{AppConstants.OcrRequireStableReads} {dbg}";
+            $"red={redAngleText} blue={result.BlueAngles.Count} diff={diffText} cDiff={centerDiffText} overlap={(result.Overlap ? "Y" : "N")} mode={mode} src={(usingFallbackOcr ? "hold" : "live")} key={key ?? "-"}({score:0.00}) m={margin:0.00} st={_ocrSameKeyStreak}/{AppConstants.OcrRequireStableReads} {dbg}";
 
         var strictDiffLimit = Math.Min(AppConstants.PressStrictMaxDiffDeg, _cfg.AngleToleranceDeg * AppConstants.PressStrictTolRatio);
         var isKeyOk = IsAllowedAndMapped(key, allowedKeys);
         var isTimingOk = result.BestDiff.HasValue && result.BestDiff.Value <= strictDiffLimit;
+        var isCenterOk = hasCenterDiff && centerDiffDeg <= AppConstants.PressCenterMaxDiffDeg;
         var isApproachingCenter = !result.BestDiff.HasValue
             || !_prevFrameDiff.HasValue
             || result.BestDiff.Value <= (_prevFrameDiff.Value + 0.35);
-        var isStableFrame = result.Overlap && isTimingOk && isKeyOk && scoreOk && keyStable;
+        var isStableFrame = result.Overlap && isTimingOk && isCenterOk && isKeyOk && scoreOk && keyStable;
         var justTouched = result.Overlap && !_wasOverlapping;
         if (justTouched)
         {
@@ -1497,12 +1502,13 @@ public sealed class MainForm : Form
                     keyStable ? null : "unstable-key",
                     isKeyOk ? null : "bad-key",
                     isTimingOk ? null : "bad-timing",
+                    isCenterOk ? null : "off-center",
                     isApproachingCenter ? null : "away-center",
                     isInTouchWindow ? null : "not-touching",
                 }.Where(x => x is not null));
 
             AppendLog(
-                $"OCR dbg | mode={mode} src={(usingFallbackOcr ? "hold" : "live")} overlap={(result.Overlap ? "Y" : "N")} touch={(isInTouchWindow ? "Y" : "N")} key={(key ?? "-").ToUpperInvariant()} score={score:0.000}/{_ocrMinScore:0.000} m={margin:0.000}/{_ocrMinMargin:0.000} stable={_ocrSameKeyStreak}/{AppConstants.OcrRequireStableReads} amb={(ocr.IsAmbiguous ? "Y" : "N")} diff={diffText} reject={(string.IsNullOrWhiteSpace(rejectReason) ? "-" : rejectReason)} | {dbg}");
+                $"OCR dbg | mode={mode} src={(usingFallbackOcr ? "hold" : "live")} overlap={(result.Overlap ? "Y" : "N")} touch={(isInTouchWindow ? "Y" : "N")} key={(key ?? "-").ToUpperInvariant()} score={score:0.000}/{_ocrMinScore:0.000} m={margin:0.000}/{_ocrMinMargin:0.000} stable={_ocrSameKeyStreak}/{AppConstants.OcrRequireStableReads} amb={(ocr.IsAmbiguous ? "Y" : "N")} diff={diffText} cDiff={centerDiffText}/{AppConstants.PressCenterMaxDiffDeg:0.0} reject={(string.IsNullOrWhiteSpace(rejectReason) ? "-" : rejectReason)} | {dbg}");
             _lastOcrDebugLogMs = nowMs;
         }
 
@@ -1580,6 +1586,118 @@ public sealed class MainForm : Form
     private static bool IsAllowedAndMapped(string? key, IReadOnlyCollection<string> allowed)
     {
         return IsAllowedKey(key, allowed) && key is not null && AppConstants.VkMap.ContainsKey(key);
+    }
+
+    private static bool TryGetBlueArcCenterDiff(double redAngleDeg, IReadOnlyList<double> blueAngles, double stepDeg, out double centerDiffDeg)
+    {
+        centerDiffDeg = 999.0;
+        if (blueAngles.Count == 0)
+        {
+            return false;
+        }
+
+        var sorted = blueAngles
+            .Select(NormalizeDeg)
+            .Distinct()
+            .OrderBy(x => x)
+            .ToList();
+
+        if (sorted.Count == 0)
+        {
+            return false;
+        }
+
+        var red = NormalizeDeg(redAngleDeg);
+        var nearestIndex = 0;
+        var nearestDelta = 999.0;
+        for (var i = 0; i < sorted.Count; i++)
+        {
+            var d = MinigameDetector.CircularDelta(red, sorted[i]);
+            if (d < nearestDelta)
+            {
+                nearestDelta = d;
+                nearestIndex = i;
+            }
+        }
+
+        var allowedGap = Math.Max(0.6, stepDeg * 1.6);
+        var selected = new List<double> { sorted[nearestIndex] };
+
+        var idx = nearestIndex;
+        while (true)
+        {
+            var prev = (idx - 1 + sorted.Count) % sorted.Count;
+            var gap = ForwardDelta(sorted[prev], sorted[idx]);
+            if (gap > allowedGap || selected.Contains(sorted[prev]))
+            {
+                break;
+            }
+
+            selected.Add(sorted[prev]);
+            idx = prev;
+        }
+
+        idx = nearestIndex;
+        while (true)
+        {
+            var next = (idx + 1) % sorted.Count;
+            var gap = ForwardDelta(sorted[idx], sorted[next]);
+            if (gap > allowedGap || selected.Contains(sorted[next]))
+            {
+                break;
+            }
+
+            selected.Add(sorted[next]);
+            idx = next;
+        }
+
+        var anchor = sorted[nearestIndex];
+        var unwrapped = selected.Select(a => UnwrapAround(a, anchor)).ToList();
+        var minA = unwrapped.Min();
+        var maxA = unwrapped.Max();
+        var center = NormalizeDeg((minA + maxA) / 2.0);
+
+        centerDiffDeg = MinigameDetector.CircularDelta(red, center);
+        return true;
+    }
+
+    private static double NormalizeDeg(double deg)
+    {
+        var v = deg % 360.0;
+        if (v < 0.0)
+        {
+            v += 360.0;
+        }
+
+        return v;
+    }
+
+    private static double ForwardDelta(double fromDeg, double toDeg)
+    {
+        var d = NormalizeDeg(toDeg) - NormalizeDeg(fromDeg);
+        if (d < 0.0)
+        {
+            d += 360.0;
+        }
+
+        return d;
+    }
+
+    private static double UnwrapAround(double angleDeg, double anchorDeg)
+    {
+        var x = NormalizeDeg(angleDeg);
+        var a = NormalizeDeg(anchorDeg);
+        while ((x - a) > 180.0)
+        {
+            x -= 360.0;
+        }
+
+        while ((a - x) > 180.0)
+        {
+            x += 360.0;
+        }
+
+        return x;
     }
 
     private Mat BlueRingMask(Mat blueMask, CvPoint center)
