@@ -21,6 +21,7 @@ public static class AppConstants
     public const int PressRequireStableFrames = 1;
     public const double PressStrictMaxDiffDeg = 9.0;
     public const double PressStrictTolRatio = 0.70;
+    public const double PressTriggerDiffDeg = 5.8;
     public const int PressRearmClearFrames = 1;
     public const int PressTouchWindowMs = 160;
     public const double PressCenterMaxDiffDeg = 8.5;
