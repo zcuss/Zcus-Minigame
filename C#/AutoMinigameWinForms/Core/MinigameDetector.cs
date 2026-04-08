@@ -85,7 +85,7 @@ public static class MinigameDetector
             frameBgr.Height / 2 + cfg.ScanCenterOffsetY
         );
 
-        var redPoint = FirstRedPixel(redFiltered);
+        var redPoint = FirstRedPixel(redFiltered, center);
         double? redAngle = redPoint.HasValue ? AngleFromCenter(redPoint.Value, center) : null;
 
         var (blueAngles, bluePoints) = ScanBlueAngles(blueFiltered, center, cfg);
@@ -151,7 +151,7 @@ public static class MinigameDetector
         return output;
     }
 
-    private static Point? FirstRedPixel(Mat mask)
+    private static Point? FirstRedPixel(Mat mask, Point center)
     {
         using var points = new Mat();
         Cv2.FindNonZero(mask, points);
@@ -160,7 +160,23 @@ public static class MinigameDetector
             return null;
         }
 
-        return points.Get<Point>(0);
+        // Use the outer-most red pixel from scan center as the needle tip proxy.
+        var best = points.Get<Point>(0);
+        var bestDist2 = -1.0;
+        for (var i = 0; i < points.Rows; i++)
+        {
+            var p = points.Get<Point>(i);
+            var dx = p.X - center.X;
+            var dy = p.Y - center.Y;
+            var d2 = (dx * dx) + (dy * dy);
+            if (d2 > bestDist2)
+            {
+                bestDist2 = d2;
+                best = p;
+            }
+        }
+
+        return best;
     }
 
     private static (List<double> angles, List<Point> points) ScanBlueAngles(Mat mask, Point center, SimpleConfig cfg)
