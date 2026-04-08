@@ -26,8 +26,7 @@ public sealed class OcrEngine : IDisposable
 
     public OcrResult DetectWhiteLetterLineStyle(
         Mat frameBgr,
-        Point ocrCenter,
-        Point scanCenter,
+        Point center,
         int ocrOffsetX,
         int ocrOffsetY,
         int boxW,
@@ -40,8 +39,8 @@ public sealed class OcrEngine : IDisposable
         var w = frameBgr.Cols;
         var halfW = Math.Max(1, boxW / 2);
         var halfH = Math.Max(1, boxH / 2);
-        var cx = ocrCenter.X + ocrOffsetX;
-        var cy = ocrCenter.Y + ocrOffsetY;
+        var cx = center.X + ocrOffsetX;
+        var cy = center.Y + ocrOffsetY;
 
         var x1 = Math.Max(0, cx - halfW);
         var x2 = Math.Min(w, cx + halfW);

@@ -1372,13 +1372,10 @@ public sealed class MainForm : Form
             "1234" => AppConstants.DigitTemplateKeys,
             _ => AppConstants.AllTemplateKeys,
         };
-        var ocrAnchor = new CvPoint(frameScan.Width / 2, frameScan.Height / 2);
-
         if ((nowMs - _lastOcrMs) >= AppConstants.OcrIntervalMs)
         {
             var ocrNow = _ocrEngine.DetectWhiteLetterLineStyle(
                 frameScan,
-                ocrAnchor,
                 result.Center,
                 (int)_spOcrX.Value,
                 (int)_spOcrY.Value,
