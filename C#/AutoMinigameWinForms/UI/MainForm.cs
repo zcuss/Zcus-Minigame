@@ -47,6 +47,8 @@ public sealed class MainForm : Form
     private int _overlapStreak;
     private int _clearStreak;
     private bool _pressArmed = true;
+    private bool _wasOverlapping;
+    private double _touchWindowUntilMs;
     private string _lastOcrKeyStable = string.Empty;
     private int _ocrSameKeyStreak;
     private double? _prevFrameDiff;
@@ -717,6 +719,8 @@ public sealed class MainForm : Form
                 _overlapStreak = 0;
                 _clearStreak = 0;
                 _pressArmed = true;
+                _wasOverlapping = false;
+                _touchWindowUntilMs = 0;
                 _lastOcrKeyStable = string.Empty;
                 _ocrSameKeyStreak = 0;
                 _lastValidOcr = new OcrResult(null, 0.0, "w:0.00 a:0.00", new CvRect(0, 0, 0, 0));
@@ -739,6 +743,8 @@ public sealed class MainForm : Form
         _overlapStreak = 0;
         _clearStreak = 0;
         _pressArmed = true;
+        _wasOverlapping = false;
+        _touchWindowUntilMs = 0;
         _lastOcrKeyStable = string.Empty;
         _ocrSameKeyStreak = 0;
         _lastValidOcr = new OcrResult(null, 0.0, "w:0.00 a:0.00", new CvRect(0, 0, 0, 0));
@@ -1441,6 +1447,12 @@ public sealed class MainForm : Form
             || !_prevFrameDiff.HasValue
             || result.BestDiff.Value <= (_prevFrameDiff.Value + 0.35);
         var isStableFrame = result.Overlap && isTimingOk && isKeyOk && scoreOk && keyStable;
+        var justTouched = result.Overlap && !_wasOverlapping;
+        if (justTouched)
+        {
+            _touchWindowUntilMs = nowMs + AppConstants.PressTouchWindowMs;
+        }
+        var isInTouchWindow = result.Overlap && nowMs <= _touchWindowUntilMs;
 
         if (isStableFrame)
         {
@@ -1457,6 +1469,7 @@ public sealed class MainForm : Form
             }
             if (!result.Overlap)
             {
+                _touchWindowUntilMs = 0;
                 _prevFrameDiff = null;
             }
         }
@@ -1464,6 +1477,7 @@ public sealed class MainForm : Form
 
         var canPress =
             AppConstants.AutoPressOnOverlap &&
+            isInTouchWindow &&
             _overlapStreak >= AppConstants.PressRequireStableFrames &&
             _pressArmed &&
             (now - _lastAttempt) >= AppConstants.AttemptIntervalSec &&
@@ -1484,10 +1498,11 @@ public sealed class MainForm : Form
                     isKeyOk ? null : "bad-key",
                     isTimingOk ? null : "bad-timing",
                     isApproachingCenter ? null : "away-center",
+                    isInTouchWindow ? null : "not-touching",
                 }.Where(x => x is not null));
 
             AppendLog(
-                $"OCR dbg | mode={mode} src={(usingFallbackOcr ? "hold" : "live")} overlap={(result.Overlap ? "Y" : "N")} key={(key ?? "-").ToUpperInvariant()} score={score:0.000}/{_ocrMinScore:0.000} m={margin:0.000}/{_ocrMinMargin:0.000} stable={_ocrSameKeyStreak}/{AppConstants.OcrRequireStableReads} amb={(ocr.IsAmbiguous ? "Y" : "N")} diff={diffText} reject={(string.IsNullOrWhiteSpace(rejectReason) ? "-" : rejectReason)} | {dbg}");
+                $"OCR dbg | mode={mode} src={(usingFallbackOcr ? "hold" : "live")} overlap={(result.Overlap ? "Y" : "N")} touch={(isInTouchWindow ? "Y" : "N")} key={(key ?? "-").ToUpperInvariant()} score={score:0.000}/{_ocrMinScore:0.000} m={margin:0.000}/{_ocrMinMargin:0.000} stable={_ocrSameKeyStreak}/{AppConstants.OcrRequireStableReads} amb={(ocr.IsAmbiguous ? "Y" : "N")} diff={diffText} reject={(string.IsNullOrWhiteSpace(rejectReason) ? "-" : rejectReason)} | {dbg}");
             _lastOcrDebugLogMs = nowMs;
         }
 
@@ -1500,6 +1515,7 @@ public sealed class MainForm : Form
                 _lastAttempt = now;
                 _pressArmed = false;
                 _lastValidOcrMs = 0;
+                _touchWindowUntilMs = 0;
 
                 _hit++;
 
@@ -1514,6 +1530,7 @@ public sealed class MainForm : Form
         {
             _prevFrameDiff = result.BestDiff.Value;
         }
+        _wasOverlapping = result.Overlap;
 
         if (needRender)
         {
