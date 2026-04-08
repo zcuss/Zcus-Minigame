@@ -18,8 +18,8 @@
     }
 
     canvas{
-        width:252px;
-        height:252px;
+        width:180px;
+        height:180px;
         image-rendering: crisp-edges;
     }
 
@@ -56,6 +56,19 @@
         padding:4px 8px;
         cursor:pointer;
         font-size:12px;
+    }
+
+    .mode-switch-btn{
+        margin-top:8px;
+        width:100%;
+        border:1px solid #4f73c2;
+        background:#122544;
+        color:#eaf3ff;
+        border-radius:4px;
+        padding:8px 10px;
+        cursor:pointer;
+        font-size:13px;
+        font-weight:700;
     }
 
     .log-panel{
@@ -133,8 +146,9 @@
 </div>
 <div class="hud" style="top:auto;bottom:14px;">
     <div class="title">Mode</div>
-    <div>Press TAB to switch game</div>
+    <div>Press TAB / M atau klik tombol</div>
     <div id="modeText">Current: WASD</div>
+    <button id="modeSwitchBtn" class="mode-switch-btn">Switch Mode</button>
 </div>
 <canvas id="game" width="180" height="180"></canvas>
 
@@ -144,6 +158,7 @@ const ctx = canvas.getContext("2d");
 
 const MODE_WASD = 0;
 const MODE_1234 = 1;
+const MODE_STORAGE_KEY = "asm_game_mode";
 
 let gameMode = MODE_WASD;
 const modeText = document.getElementById("modeText");
@@ -208,6 +223,30 @@ const copyCsvBtn = document.getElementById("copyCsvBtn");
 const clearReportBtn = document.getElementById("clearReportBtn");
 const startBtn = document.getElementById("startBtn");
 const stopBtn = document.getElementById("stopBtn");
+const modeSwitchBtn = document.getElementById("modeSwitchBtn");
+
+function isValidMode(mode){
+    return mode === MODE_WASD || mode === MODE_1234;
+}
+
+function loadSavedMode(){
+    try{
+        const saved = localStorage.getItem(MODE_STORAGE_KEY);
+        if(saved === null){
+            return MODE_WASD;
+        }
+        const parsed = Number(saved);
+        return isValidMode(parsed) ? parsed : MODE_WASD;
+    } catch (_) {
+        return MODE_WASD;
+    }
+}
+
+function saveMode(){
+    try{
+        localStorage.setItem(MODE_STORAGE_KEY, String(gameMode));
+    } catch (_) {}
+}
 
 function randomFromSet(arr){
     return arr[Math.floor(Math.random() * arr.length)];
@@ -408,14 +447,19 @@ function handleAttemptGame2(pressKey){
     appendInfo(`mode=${GAME2.name} required=${GAME2.currentKey}`);
 }
 
+function switchMode(){
+    gameMode = gameMode === MODE_WASD ? MODE_1234 : MODE_WASD;
+    modeText.textContent = `Current: ${gameMode === MODE_WASD ? GAME1.name : GAME2.name}`;
+    saveMode();
+    updateStats();
+}
+
 document.addEventListener("keydown", (e) => {
     const key = e.key.toUpperCase();
 
-    if(e.key === "Tab"){
+    if(e.key === "Tab" || key === "M"){
         e.preventDefault();
-        gameMode = gameMode === MODE_WASD ? MODE_1234 : MODE_WASD;
-        modeText.textContent = `Current: ${gameMode === MODE_WASD ? GAME1.name : GAME2.name}`;
-        updateStats();
+        switchMode();
         return;
     }
 
@@ -474,6 +518,10 @@ stopBtn.addEventListener("click", () => {
     updateStats();
 });
 
+modeSwitchBtn.addEventListener("click", () => {
+    switchMode();
+});
+
 function update(){
     if(isRunning){
         if(gameMode === MODE_WASD){
@@ -503,13 +551,14 @@ function update(){
     requestAnimationFrame(update);
 }
 
-modeText.textContent = "Current: WASD";
+gameMode = loadSavedMode();
+modeText.textContent = `Current: ${gameMode === MODE_WASD ? GAME1.name : GAME2.name}`;
 GAME1.currentKey = randomFromSet(GAME1.keys);
 GAME2.currentKey = randomFromSet(GAME2.keys);
 tickAngle = START_ANGLE;
 GAME2.sweepAngle = START_ANGLE;
 game1RoundStart = START_ANGLE;
-appendInfo(`READY mode=${GAME1.name} required=${GAME1.currentKey}`);
+appendInfo(`READY mode=${gameMode === MODE_WASD ? GAME1.name : GAME2.name} required=${gameMode === MODE_WASD ? GAME1.currentKey : GAME2.currentKey}`);
 updateStats();
 draw();
 update();
