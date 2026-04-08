@@ -177,26 +177,30 @@ const GAME2 = {
     zoneColor: "#3fd0b5",
     currentKey: "2",
     sweepAngle: -Math.PI / 2,
-    greenAngle: Math.PI * 0.25,
+    greenAngle: 0,
     greenSize: 0.42,
     sweepSpeed: 0.02
 };
 
 let tickAngle = Math.random() * Math.PI * 2;
-let zoneAngle = Math.random() * Math.PI * 2;
 
 const speed = 0.045;
 const hitWindow = 0.25;
 const START_ANGLE = -Math.PI / 2;
 const FULL_TURN = Math.PI * 2;
 const TIMEOUT_PRESS = "TIMEOUT";
+const TOP_BLOCK_DEG = 25;
+const TOP_BLOCK_RAD = TOP_BLOCK_DEG * Math.PI / 180;
+const MIN_BLUE_CM = 2;
+const MAX_BLUE_CM = 3;
+const PX_PER_CM = 37.7952755906;
 
 const cx = 90;
 const cy = 90;
 const radius = 55;
-const zoneSize = 0.45;
-const zoneCenterOffset = zoneSize / 2;
 let game1RoundStart = START_ANGLE;
+let game1ZoneSize = 0.45;
+let zoneAngle = 0;
 
 let statHit = 0;
 let statMiss = 0;
@@ -264,6 +268,29 @@ function randomZone(){
     return Math.random() * Math.PI * 2;
 }
 
+function cmToArcRad(cm){
+    return (cm * PX_PER_CM) / radius;
+}
+
+function randomBlueSize(){
+    const minRad = cmToArcRad(MIN_BLUE_CM);
+    const maxRad = cmToArcRad(MAX_BLUE_CM);
+    return minRad + Math.random() * Math.max(0.0001, maxRad - minRad);
+}
+
+function randomZoneAvoidTop(arcSize){
+    const safeArc = Math.max(0, arcSize);
+    for(let i = 0; i < 80; i++){
+        const candidate = randomZone();
+        const center = candidate + safeArc / 2;
+        const minSafe = TOP_BLOCK_RAD + safeArc / 2;
+        if(angleDiff(center, START_ANGLE) >= minSafe){
+            return candidate;
+        }
+    }
+    return randomZone();
+}
+
 function angleDiff(a, b){
     const d = Math.abs(a - b) % (Math.PI * 2);
     return Math.min(d, Math.PI * 2 - d);
@@ -305,7 +332,7 @@ function drawGame1(){
     ctx.lineWidth = 12;
     ctx.strokeStyle = GAME1.zoneColor;
     ctx.lineCap = "butt";
-    ctx.arc(cx, cy, radius, zoneAngle, zoneAngle + zoneSize);
+    ctx.arc(cx, cy, radius, zoneAngle, zoneAngle + game1ZoneSize);
     ctx.stroke();
 
     const inner = radius - 4;
@@ -414,7 +441,7 @@ function handleAttemptGame1(pressKey){
     if(!GAME1.keys.includes(pressKey)) return;
     lastPressedKey = pressKey;
 
-    const offset = angleDiff(tickAngle, zoneAngle + zoneCenterOffset);
+    const offset = angleDiff(tickAngle, zoneAngle + game1ZoneSize / 2);
     const offsetDeg = radToDeg(offset);
     const hit = pressKey === GAME1.currentKey && offset < hitWindow;
 
@@ -423,7 +450,8 @@ function handleAttemptGame1(pressKey){
     game1RoundStart = START_ANGLE;
 
     GAME1.currentKey = randomFromSetExcept(GAME1.keys, GAME1.currentKey);
-    zoneAngle = randomZone();
+    game1ZoneSize = randomBlueSize();
+    zoneAngle = randomZoneAvoidTop(game1ZoneSize);
     appendInfo(`mode=${GAME1.name} required=${GAME1.currentKey}`);
 }
 
@@ -443,7 +471,8 @@ function handleAttemptGame2(pressKey){
     GAME2.sweepAngle = START_ANGLE;
 
     GAME2.currentKey = randomFromSetExcept(GAME2.keys, GAME2.currentKey);
-    GAME2.greenAngle = randomZone();
+    GAME2.greenSize = randomBlueSize();
+    GAME2.greenAngle = randomZoneAvoidTop(GAME2.greenSize);
     appendInfo(`mode=${GAME2.name} required=${GAME2.currentKey}`);
 }
 
@@ -531,7 +560,8 @@ function update(){
                 tickAngle = START_ANGLE;
                 game1RoundStart = START_ANGLE;
                 GAME1.currentKey = randomFromSetExcept(GAME1.keys, GAME1.currentKey);
-                zoneAngle = randomZone();
+                game1ZoneSize = randomBlueSize();
+                zoneAngle = randomZoneAvoidTop(game1ZoneSize);
                 appendInfo(`mode=${GAME1.name} required=${GAME1.currentKey}`);
             }
         } else {
@@ -541,7 +571,8 @@ function update(){
                 appendAttempt(GAME2.currentKey, TIMEOUT_PRESS, false, 180.0);
                 GAME2.sweepAngle = START_ANGLE;
                 GAME2.currentKey = randomFromSetExcept(GAME2.keys, GAME2.currentKey);
-                GAME2.greenAngle = randomZone();
+                GAME2.greenSize = randomBlueSize();
+                GAME2.greenAngle = randomZoneAvoidTop(GAME2.greenSize);
                 appendInfo(`mode=${GAME2.name} required=${GAME2.currentKey}`);
             }
         }
@@ -557,7 +588,11 @@ GAME1.currentKey = randomFromSet(GAME1.keys);
 GAME2.currentKey = randomFromSet(GAME2.keys);
 tickAngle = START_ANGLE;
 GAME2.sweepAngle = START_ANGLE;
+GAME2.greenSize = randomBlueSize();
+GAME2.greenAngle = randomZoneAvoidTop(GAME2.greenSize);
 game1RoundStart = START_ANGLE;
+game1ZoneSize = randomBlueSize();
+zoneAngle = randomZoneAvoidTop(game1ZoneSize);
 appendInfo(`READY mode=${gameMode === MODE_WASD ? GAME1.name : GAME2.name} required=${gameMode === MODE_WASD ? GAME1.currentKey : GAME2.currentKey}`);
 updateStats();
 draw();
