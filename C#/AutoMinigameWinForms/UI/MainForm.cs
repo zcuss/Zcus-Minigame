@@ -49,6 +49,7 @@ public sealed class MainForm : Form
     private bool _pressArmed = true;
     private string _lastOcrKeyStable = string.Empty;
     private int _ocrSameKeyStreak;
+    private int _timingStableStreak;
     private double? _prevFrameDiff;
     private nint? _targetHwnd;
     private Rectangle? _cachedRegion;
@@ -719,6 +720,7 @@ public sealed class MainForm : Form
                 _pressArmed = true;
                 _lastOcrKeyStable = string.Empty;
                 _ocrSameKeyStreak = 0;
+                _timingStableStreak = 0;
                 _lastValidOcr = new OcrResult(null, 0.0, "w:0.00 a:0.00", new CvRect(0, 0, 0, 0));
                 _lastValidOcrMs = 0;
                 _prevFrameDiff = null;
@@ -741,6 +743,7 @@ public sealed class MainForm : Form
         _pressArmed = true;
         _lastOcrKeyStable = string.Empty;
         _ocrSameKeyStreak = 0;
+        _timingStableStreak = 0;
         _lastValidOcr = new OcrResult(null, 0.0, "w:0.00 a:0.00", new CvRect(0, 0, 0, 0));
         _lastValidOcrMs = 0;
         _prevFrameDiff = null;
@@ -1448,10 +1451,23 @@ public sealed class MainForm : Form
 
         var strictDiffLimit = Math.Min(AppConstants.PressStrictMaxDiffDeg, _cfg.AngleToleranceDeg * AppConstants.PressStrictTolRatio);
         var isKeyOk = IsAllowedAndMapped(key, allowedKeys);
-        var isTimingOk = result.BestDiff.HasValue && result.BestDiff.Value <= strictDiffLimit;
+        var hasDiff = result.BestDiff.HasValue;
+        var diffNow = hasDiff ? result.BestDiff!.Value : 999.0;
+        var isDiffWithinRange = hasDiff && diffNow <= strictDiffLimit;
+        var isDiffTight = hasDiff && diffNow <= AppConstants.PressFireMaxDiffDeg;
+        var isDiffJitterOk = !_prevFrameDiff.HasValue || Math.Abs(diffNow - _prevFrameDiff.Value) <= AppConstants.PressMaxDiffJitterDeg;
         var isApproachingCenter = !result.BestDiff.HasValue
             || !_prevFrameDiff.HasValue
             || result.BestDiff.Value <= (_prevFrameDiff.Value + 0.35);
+        if (isDiffTight && isDiffWithinRange && isDiffJitterOk && isApproachingCenter)
+        {
+            _timingStableStreak++;
+        }
+        else
+        {
+            _timingStableStreak = 0;
+        }
+        var isTimingOk = _timingStableStreak >= AppConstants.PressRequireStableDiffFrames;
         var isStableFrame = result.Overlap && isTimingOk && isKeyOk && scoreOk && marginOk && keyStable;
 
         if (isStableFrame)
@@ -1469,6 +1485,7 @@ public sealed class MainForm : Form
             }
             if (!result.Overlap)
             {
+                _timingStableStreak = 0;
                 _prevFrameDiff = null;
             }
         }
@@ -1495,11 +1512,14 @@ public sealed class MainForm : Form
                     marginOk ? null : "low-margin",
                     keyStable ? null : "unstable-key",
                     isKeyOk ? null : "bad-key",
-                    isTimingOk ? null : "bad-timing",
+                    isDiffWithinRange ? null : "range-timing",
+                    isDiffTight ? null : "tight-timing",
+                    isDiffJitterOk ? null : "jittery-diff",
+                    isTimingOk ? null : "timing-streak",
                 }.Where(x => x is not null));
 
             AppendLog(
-                $"OCR dbg | mode={mode} src={(usingFallbackOcr ? "hold" : "live")} overlap={(result.Overlap ? "Y" : "N")} key={(key ?? "-").ToUpperInvariant()} score={score:0.000}/{_ocrMinScore:0.000} m={margin:0.000}/{_ocrMinMargin:0.000} stable={_ocrSameKeyStreak}/{AppConstants.OcrRequireStableReads} amb={(ocr.IsAmbiguous ? "Y" : "N")} diff={diffText} reject={(string.IsNullOrWhiteSpace(rejectReason) ? "-" : rejectReason)} | {dbg}");
+                $"OCR dbg | mode={mode} src={(usingFallbackOcr ? "hold" : "live")} overlap={(result.Overlap ? "Y" : "N")} key={(key ?? "-").ToUpperInvariant()} score={score:0.000}/{_ocrMinScore:0.000} m={margin:0.000}/{_ocrMinMargin:0.000} stable={_ocrSameKeyStreak}/{AppConstants.OcrRequireStableReads} t={_timingStableStreak}/{AppConstants.PressRequireStableDiffFrames} amb={(ocr.IsAmbiguous ? "Y" : "N")} diff={diffText} reject={(string.IsNullOrWhiteSpace(rejectReason) ? "-" : rejectReason)} | {dbg}");
             _lastOcrDebugLogMs = nowMs;
         }
 
@@ -1511,6 +1531,8 @@ public sealed class MainForm : Form
                 _lastPress = now;
                 _lastAttempt = now;
                 _pressArmed = false;
+                _timingStableStreak = 0;
+                _lastValidOcrMs = 0;
 
                 _hit++;
 
