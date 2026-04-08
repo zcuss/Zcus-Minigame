@@ -719,6 +719,8 @@ public sealed class MainForm : Form
                 _pressArmed = true;
                 _lastOcrKeyStable = string.Empty;
                 _ocrSameKeyStreak = 0;
+                _lastValidOcr = new OcrResult(null, 0.0, "w:0.00 a:0.00", new CvRect(0, 0, 0, 0));
+                _lastValidOcrMs = 0;
                 _prevFrameDiff = null;
                 _statusLabel.Text = "Status: Tracking...";
                 SetStartButtonStyle(true);
@@ -739,6 +741,8 @@ public sealed class MainForm : Form
         _pressArmed = true;
         _lastOcrKeyStable = string.Empty;
         _ocrSameKeyStreak = 0;
+        _lastValidOcr = new OcrResult(null, 0.0, "w:0.00 a:0.00", new CvRect(0, 0, 0, 0));
+        _lastValidOcrMs = 0;
         _prevFrameDiff = null;
         _statusLabel.Text = "Status: Idle";
         SetStartButtonStyle(false);
@@ -1386,7 +1390,11 @@ public sealed class MainForm : Form
             );
 
             _lastOcr = ocrNow;
-            if (IsAllowedAndMapped(ocrNow.Key, allowedKeys))
+            var validCandidate = IsAllowedAndMapped(ocrNow.Key, allowedKeys)
+                && ocrNow.Score >= _ocrMinScore
+                && ocrNow.Margin >= _ocrMinMargin
+                && !ocrNow.IsAmbiguous;
+            if (validCandidate)
             {
                 _lastValidOcr = ocrNow;
                 _lastValidOcrMs = nowMs;
@@ -1396,12 +1404,30 @@ public sealed class MainForm : Form
         }
 
         var ocr = _lastOcr;
+        var rawKeyOk = IsAllowedAndMapped(ocr.Key, allowedKeys);
+        var rawScoreOk = ocr.Score >= _ocrMinScore;
+        var rawMarginOk = ocr.Margin >= _ocrMinMargin;
+        var rawConfident = rawKeyOk && rawScoreOk && rawMarginOk && !ocr.IsAmbiguous;
+
+        var usingFallbackOcr = false;
+        if (!rawConfident && _lastValidOcrMs > 0 && (nowMs - _lastValidOcrMs) <= AppConstants.OcrHoldMs)
+        {
+            var lastStillAllowed = IsAllowedAndMapped(_lastValidOcr.Key, allowedKeys);
+            if (lastStillAllowed)
+            {
+                ocr = _lastValidOcr;
+                usingFallbackOcr = true;
+            }
+        }
 
         var key = ocr.Key;
         var score = ocr.Score;
         var margin = ocr.Margin;
         var dbg = ocr.Debug;
         var ocrBox = ocr.Box;
+
+        var scoreOk = score >= _ocrMinScore;
+        var marginOk = margin >= _ocrMinMargin;
 
         var normalizedKey = (key ?? string.Empty).Trim().ToUpperInvariant();
         if (!string.IsNullOrWhiteSpace(normalizedKey) && normalizedKey == _lastOcrKeyStable)
@@ -1413,11 +1439,12 @@ public sealed class MainForm : Form
             _lastOcrKeyStable = normalizedKey;
             _ocrSameKeyStreak = string.IsNullOrWhiteSpace(normalizedKey) ? 0 : 1;
         }
+        var keyStable = _ocrSameKeyStreak >= AppConstants.OcrRequireStableReads;
 
         var redAngleText = result.RedAngle.HasValue ? result.RedAngle.Value.ToString("0.0") : "-";
         var diffText = result.BestDiff.HasValue ? result.BestDiff.Value.ToString("0.0") : "-";
         _detailLabel.Text =
-            $"red={redAngleText} blue={result.BlueAngles.Count} diff={diffText} overlap={(result.Overlap ? "Y" : "N")} mode={mode} key={key ?? "-"}({score:0.00}) m={margin:0.00} {dbg}";
+            $"red={redAngleText} blue={result.BlueAngles.Count} diff={diffText} overlap={(result.Overlap ? "Y" : "N")} mode={mode} src={(usingFallbackOcr ? "hold" : "live")} key={key ?? "-"}({score:0.00}) m={margin:0.00} st={_ocrSameKeyStreak}/{AppConstants.OcrRequireStableReads} {dbg}";
 
         var strictDiffLimit = Math.Min(AppConstants.PressStrictMaxDiffDeg, _cfg.AngleToleranceDeg * AppConstants.PressStrictTolRatio);
         var isKeyOk = IsAllowedAndMapped(key, allowedKeys);
@@ -1425,7 +1452,7 @@ public sealed class MainForm : Form
         var isApproachingCenter = !result.BestDiff.HasValue
             || !_prevFrameDiff.HasValue
             || result.BestDiff.Value <= (_prevFrameDiff.Value + 0.35);
-        var isStableFrame = result.Overlap && isTimingOk && isKeyOk && score >= _ocrMinScore;
+        var isStableFrame = result.Overlap && isTimingOk && isKeyOk && scoreOk && marginOk && keyStable;
 
         if (isStableFrame)
         {
@@ -1461,8 +1488,18 @@ public sealed class MainForm : Form
 
         if (_debugAllLogs && (nowMs - _lastOcrDebugLogMs) >= 250)
         {
+            var rejectReason = string.Join(',',
+                new[]
+                {
+                    scoreOk ? null : "low-score",
+                    marginOk ? null : "low-margin",
+                    keyStable ? null : "unstable-key",
+                    isKeyOk ? null : "bad-key",
+                    isTimingOk ? null : "bad-timing",
+                }.Where(x => x is not null));
+
             AppendLog(
-                $"OCR dbg | mode={mode} overlap={(result.Overlap ? "Y" : "N")} key={(key ?? "-").ToUpperInvariant()} score={score:0.000}/{_ocrMinScore:0.000} m={margin:0.000}/{_ocrMinMargin:0.000} amb={(ocr.IsAmbiguous ? "Y" : "N")} diff={diffText} | {dbg}");
+                $"OCR dbg | mode={mode} src={(usingFallbackOcr ? "hold" : "live")} overlap={(result.Overlap ? "Y" : "N")} key={(key ?? "-").ToUpperInvariant()} score={score:0.000}/{_ocrMinScore:0.000} m={margin:0.000}/{_ocrMinMargin:0.000} stable={_ocrSameKeyStreak}/{AppConstants.OcrRequireStableReads} amb={(ocr.IsAmbiguous ? "Y" : "N")} diff={diffText} reject={(string.IsNullOrWhiteSpace(rejectReason) ? "-" : rejectReason)} | {dbg}");
             _lastOcrDebugLogMs = nowMs;
         }
 

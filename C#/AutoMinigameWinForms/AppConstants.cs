@@ -11,6 +11,7 @@ public static class AppConstants
     public const int MaxIdleRenderFps = 30;
     public const int OcrIntervalMs = 45;
     public const int OcrHoldMs = 220;
+    public const int OcrRequireStableReads = 2;
     public const double AttemptIntervalSec = 0.07;
     public const int WindowRefreshMs = 200;
 
@@ -30,7 +31,7 @@ public static class AppConstants
     public const int OcrWhiteVMin = 120;
     public const int OcrTemplateSize = 32;
     public const double OcrMinScore = 0.08;
-    public const double OcrMinMargin = 0.00;
+    public const double OcrMinMargin = 0.04;
     public const int OcrCrosshairMaskRadius = 1;
     public const int OcrNeedleMaskRadius = 10;
     public const string OcrModeDefault = "WASD";
