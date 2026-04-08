@@ -1451,7 +1451,7 @@ public sealed class MainForm : Form
         var isApproachingCenter = !result.BestDiff.HasValue
             || !_prevFrameDiff.HasValue
             || result.BestDiff.Value <= (_prevFrameDiff.Value + 0.35);
-        var isStableFrame = result.Overlap && isTimingOk && isCenterOk && isApproachingCenter && isKeyOk && scoreOk && keyStable;
+        var isStableFrame = result.Overlap && isTimingOk && isKeyOk && scoreOk && keyStable;
         var justTouched = result.Overlap && !_wasOverlapping;
         if (justTouched)
         {
@@ -1482,8 +1482,10 @@ public sealed class MainForm : Form
 
         var canPress =
             AppConstants.AutoPressOnOverlap &&
-            isInTouchWindow &&
-            isApproachingCenter &&
+            result.Overlap &&
+            isTimingOk &&
+            isKeyOk &&
+            scoreOk &&
             _overlapStreak >= AppConstants.PressRequireStableFrames &&
             _pressArmed &&
             (now - _lastAttempt) >= AppConstants.AttemptIntervalSec &&
