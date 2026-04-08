@@ -49,7 +49,6 @@ public sealed class MainForm : Form
     private bool _pressArmed = true;
     private string _lastOcrKeyStable = string.Empty;
     private int _ocrSameKeyStreak;
-    private int _timingStableStreak;
     private double? _prevFrameDiff;
     private nint? _targetHwnd;
     private Rectangle? _cachedRegion;
@@ -720,7 +719,6 @@ public sealed class MainForm : Form
                 _pressArmed = true;
                 _lastOcrKeyStable = string.Empty;
                 _ocrSameKeyStreak = 0;
-                _timingStableStreak = 0;
                 _lastValidOcr = new OcrResult(null, 0.0, "w:0.00 a:0.00", new CvRect(0, 0, 0, 0));
                 _lastValidOcrMs = 0;
                 _prevFrameDiff = null;
@@ -743,7 +741,6 @@ public sealed class MainForm : Form
         _pressArmed = true;
         _lastOcrKeyStable = string.Empty;
         _ocrSameKeyStreak = 0;
-        _timingStableStreak = 0;
         _lastValidOcr = new OcrResult(null, 0.0, "w:0.00 a:0.00", new CvRect(0, 0, 0, 0));
         _lastValidOcrMs = 0;
         _prevFrameDiff = null;
@@ -1393,11 +1390,7 @@ public sealed class MainForm : Form
             );
 
             _lastOcr = ocrNow;
-            var validCandidate = IsAllowedAndMapped(ocrNow.Key, allowedKeys)
-                && ocrNow.Score >= _ocrMinScore
-                && ocrNow.Margin >= _ocrMinMargin
-                && !ocrNow.IsAmbiguous;
-            if (validCandidate)
+            if (IsAllowedAndMapped(ocrNow.Key, allowedKeys))
             {
                 _lastValidOcr = ocrNow;
                 _lastValidOcrMs = nowMs;
@@ -1407,13 +1400,8 @@ public sealed class MainForm : Form
         }
 
         var ocr = _lastOcr;
-        var rawKeyOk = IsAllowedAndMapped(ocr.Key, allowedKeys);
-        var rawScoreOk = ocr.Score >= _ocrMinScore;
-        var rawMarginOk = ocr.Margin >= _ocrMinMargin;
-        var rawConfident = rawKeyOk && rawScoreOk && rawMarginOk && !ocr.IsAmbiguous;
-
         var usingFallbackOcr = false;
-        if (!rawConfident && _lastValidOcrMs > 0 && (nowMs - _lastValidOcrMs) <= AppConstants.OcrHoldMs)
+        if (!IsAllowedAndMapped(ocr.Key, allowedKeys) && _lastValidOcrMs > 0 && (nowMs - _lastValidOcrMs) <= AppConstants.OcrHoldMs)
         {
             var lastStillAllowed = IsAllowedAndMapped(_lastValidOcr.Key, allowedKeys);
             if (lastStillAllowed)
@@ -1451,24 +1439,11 @@ public sealed class MainForm : Form
 
         var strictDiffLimit = Math.Min(AppConstants.PressStrictMaxDiffDeg, _cfg.AngleToleranceDeg * AppConstants.PressStrictTolRatio);
         var isKeyOk = IsAllowedAndMapped(key, allowedKeys);
-        var hasDiff = result.BestDiff.HasValue;
-        var diffNow = hasDiff ? result.BestDiff!.Value : 999.0;
-        var isDiffWithinRange = hasDiff && diffNow <= strictDiffLimit;
-        var isDiffTight = hasDiff && diffNow <= AppConstants.PressFireMaxDiffDeg;
-        var isDiffJitterOk = !_prevFrameDiff.HasValue || Math.Abs(diffNow - _prevFrameDiff.Value) <= AppConstants.PressMaxDiffJitterDeg;
+        var isTimingOk = result.BestDiff.HasValue && result.BestDiff.Value <= strictDiffLimit;
         var isApproachingCenter = !result.BestDiff.HasValue
             || !_prevFrameDiff.HasValue
             || result.BestDiff.Value <= (_prevFrameDiff.Value + 0.35);
-        if (isDiffTight && isDiffWithinRange && isDiffJitterOk && isApproachingCenter)
-        {
-            _timingStableStreak++;
-        }
-        else
-        {
-            _timingStableStreak = 0;
-        }
-        var isTimingOk = _timingStableStreak >= AppConstants.PressRequireStableDiffFrames;
-        var isStableFrame = result.Overlap && isTimingOk && isKeyOk && scoreOk && marginOk && keyStable;
+        var isStableFrame = result.Overlap && isTimingOk && isKeyOk && scoreOk && keyStable;
 
         if (isStableFrame)
         {
@@ -1485,7 +1460,6 @@ public sealed class MainForm : Form
             }
             if (!result.Overlap)
             {
-                _timingStableStreak = 0;
                 _prevFrameDiff = null;
             }
         }
@@ -1494,7 +1468,6 @@ public sealed class MainForm : Form
         var canPress =
             AppConstants.AutoPressOnOverlap &&
             _overlapStreak >= AppConstants.PressRequireStableFrames &&
-            isApproachingCenter &&
             _pressArmed &&
             (now - _lastAttempt) >= AppConstants.AttemptIntervalSec &&
             (now - _lastPress) >= AppConstants.PressDelaySec;
@@ -1512,14 +1485,12 @@ public sealed class MainForm : Form
                     marginOk ? null : "low-margin",
                     keyStable ? null : "unstable-key",
                     isKeyOk ? null : "bad-key",
-                    isDiffWithinRange ? null : "range-timing",
-                    isDiffTight ? null : "tight-timing",
-                    isDiffJitterOk ? null : "jittery-diff",
-                    isTimingOk ? null : "timing-streak",
+                    isTimingOk ? null : "bad-timing",
+                    isApproachingCenter ? null : "away-center",
                 }.Where(x => x is not null));
 
             AppendLog(
-                $"OCR dbg | mode={mode} src={(usingFallbackOcr ? "hold" : "live")} overlap={(result.Overlap ? "Y" : "N")} key={(key ?? "-").ToUpperInvariant()} score={score:0.000}/{_ocrMinScore:0.000} m={margin:0.000}/{_ocrMinMargin:0.000} stable={_ocrSameKeyStreak}/{AppConstants.OcrRequireStableReads} t={_timingStableStreak}/{AppConstants.PressRequireStableDiffFrames} amb={(ocr.IsAmbiguous ? "Y" : "N")} diff={diffText} reject={(string.IsNullOrWhiteSpace(rejectReason) ? "-" : rejectReason)} | {dbg}");
+                $"OCR dbg | mode={mode} src={(usingFallbackOcr ? "hold" : "live")} overlap={(result.Overlap ? "Y" : "N")} key={(key ?? "-").ToUpperInvariant()} score={score:0.000}/{_ocrMinScore:0.000} m={margin:0.000}/{_ocrMinMargin:0.000} stable={_ocrSameKeyStreak}/{AppConstants.OcrRequireStableReads} amb={(ocr.IsAmbiguous ? "Y" : "N")} diff={diffText} reject={(string.IsNullOrWhiteSpace(rejectReason) ? "-" : rejectReason)} | {dbg}");
             _lastOcrDebugLogMs = nowMs;
         }
 
@@ -1531,7 +1502,6 @@ public sealed class MainForm : Form
                 _lastPress = now;
                 _lastAttempt = now;
                 _pressArmed = false;
-                _timingStableStreak = 0;
                 _lastValidOcrMs = 0;
 
                 _hit++;

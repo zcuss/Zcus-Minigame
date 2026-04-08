@@ -19,12 +19,9 @@ public static class AppConstants
     public const bool AutoPressUseOcrKey = true;
     public const double PressDelaySec = 0.07;
     public const int PressRequireStableFrames = 1;
-    public const double PressStrictMaxDiffDeg = 6.2;
+    public const double PressStrictMaxDiffDeg = 9.0;
     public const double PressStrictTolRatio = 0.70;
-    public const int PressRearmClearFrames = 2;
-    public const double PressFireMaxDiffDeg = 3.8;
-    public const int PressRequireStableDiffFrames = 2;
-    public const double PressMaxDiffJitterDeg = 1.6;
+    public const int PressRearmClearFrames = 1;
 
     public const int OcrBoxW = 40;
     public const int OcrBoxH = 40;
@@ -34,7 +31,7 @@ public static class AppConstants
     public const int OcrWhiteVMin = 120;
     public const int OcrTemplateSize = 32;
     public const double OcrMinScore = 0.08;
-    public const double OcrMinMargin = 0.04;
+    public const double OcrMinMargin = 0.00;
     public const int OcrCrosshairMaskRadius = 1;
     public const int OcrNeedleMaskRadius = 10;
     public const string OcrModeDefault = "WASD";
