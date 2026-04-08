@@ -23,7 +23,7 @@ public static class AppConstants
     public const double PressStrictTolRatio = 0.70;
     public const int PressRearmClearFrames = 1;
     public const int PressTouchWindowMs = 160;
-    public const double PressCenterMaxDiffDeg = 10.0;
+    public const double PressCenterMaxDiffDeg = 6.5;
 
     public const int OcrBoxW = 40;
     public const int OcrBoxH = 40;

@@ -1447,11 +1447,14 @@ public sealed class MainForm : Form
         var strictDiffLimit = Math.Min(AppConstants.PressStrictMaxDiffDeg, _cfg.AngleToleranceDeg * AppConstants.PressStrictTolRatio);
         var isKeyOk = IsAllowedAndMapped(key, allowedKeys);
         var isTimingOk = result.BestDiff.HasValue && result.BestDiff.Value <= strictDiffLimit;
-        var isCenterOk = !hasCenterDiff || centerDiffDeg <= AppConstants.PressCenterMaxDiffDeg;
+        var fallbackCenterLimit = Math.Max(2.2, strictDiffLimit * 0.35);
+        var isCenterOk = hasCenterDiff
+            ? centerDiffDeg <= AppConstants.PressCenterMaxDiffDeg
+            : (result.BestDiff.HasValue && result.BestDiff.Value <= fallbackCenterLimit);
         var isApproachingCenter = !result.BestDiff.HasValue
             || !_prevFrameDiff.HasValue
             || result.BestDiff.Value <= (_prevFrameDiff.Value + 0.35);
-        var isStableFrame = result.Overlap && isTimingOk && isKeyOk && scoreOk && keyStable;
+        var isStableFrame = result.Overlap && isTimingOk && isCenterOk && isApproachingCenter && isKeyOk && scoreOk && keyStable;
         var justTouched = result.Overlap && !_wasOverlapping;
         if (justTouched)
         {
@@ -1484,6 +1487,8 @@ public sealed class MainForm : Form
             AppConstants.AutoPressOnOverlap &&
             result.Overlap &&
             isTimingOk &&
+            isCenterOk &&
+            isApproachingCenter &&
             isKeyOk &&
             scoreOk &&
             _overlapStreak >= AppConstants.PressRequireStableFrames &&
