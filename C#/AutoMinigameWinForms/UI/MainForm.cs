@@ -1447,7 +1447,7 @@ public sealed class MainForm : Form
         var strictDiffLimit = Math.Min(AppConstants.PressStrictMaxDiffDeg, _cfg.AngleToleranceDeg * AppConstants.PressStrictTolRatio);
         var isKeyOk = IsAllowedAndMapped(key, allowedKeys);
         var isTimingOk = result.BestDiff.HasValue && result.BestDiff.Value <= strictDiffLimit;
-        var isCenterOk = hasCenterDiff && centerDiffDeg <= AppConstants.PressCenterMaxDiffDeg;
+        var isCenterOk = !hasCenterDiff || centerDiffDeg <= AppConstants.PressCenterMaxDiffDeg;
         var isApproachingCenter = !result.BestDiff.HasValue
             || !_prevFrameDiff.HasValue
             || result.BestDiff.Value <= (_prevFrameDiff.Value + 0.35);
