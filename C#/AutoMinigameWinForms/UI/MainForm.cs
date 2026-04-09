@@ -2100,7 +2100,7 @@ public sealed class MainForm : Form
             if (dbgMinIntervalOk && dbgRotationReady && (dbgStateChanged || dbgAction || dbgRejectChanged))
             {
                 AppendLog(
-                    $"OCR dbg | mode={mode} round={_roundId}/{_roundState} rKey={_roundKey} rk={_rearmKey} maj={(majorityKey ?? "-")} rel={dbgReliable} overlap={(result.Overlap ? "Y" : "N")} sch={(schedulerDue ? "Y" : "N")} op={(opportunisticEdgeDue ? "Y" : "N")} fb={(fallbackDue ? "Y" : "N")} hfb={(hardFallbackDue ? "Y" : "N")} arm={(_pressArmed ? "Y" : "N")} fresh={(isFreshOcrForPress ? "Y" : "N")} since={(sinceLastPressMs >= 0 ? sinceLastPressMs.ToString("0") : "-")}ms key={(key ?? "-").ToUpperInvariant()} score={score:0.000}/{_ocrMinScore:0.000} m={margin:0.000} thr={roundMarginThreshold:0.000}/{fireMarginThreshold:0.000} stable={_ocrSameKeyStreak}/{AppConstants.OcrRequireStableReads} diff={diffText}/{triggerDiffLimit:0.0} cDiff={centerDiffText}/{centerFireLimit:0.0} edge={edgeDiffDeg:0.0}/{schedulerEdgeLimit:0.0} eff={effectiveDiffDeg:0.0} lag={(double.IsNaN(scheduleLagMs) ? "-" : scheduleLagMs.ToString("0"))} ttc={ttcText} lat={_pressLatencyMsRuntime:0}ms press={(canPress ? (fallbackFireNow ? "fallback" : "scheduled") : "-")} reject={(string.IsNullOrWhiteSpace(rejectReason) ? "-" : rejectReason)} | {dbg}");
+                    $"OCR dbg | mode={mode} | key={(key ?? "-").ToUpperInvariant()} | press={(canPress ? (fallbackFireNow ? "fallback" : "scheduled") : "-")}");
                 _lastOcrDebugLogMs = nowMs;
                 _ocrDbgRotationAccumDeg = 0.0;
                 _lastDbgRoundId = _roundId;
