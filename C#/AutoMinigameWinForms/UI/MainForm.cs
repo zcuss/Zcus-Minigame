@@ -2025,6 +2025,7 @@ public sealed class MainForm : Form
         var opportunisticFireReady = false;
         var fallbackFireReady = false;
         var hardFallbackFireReady = false;
+        var deadlineRescueFireReady = false;
         var qualityFireOk = centerReliable
             ? centerForTimingDiff <= (centerFireLimit + 1.8)
             : edgeDiffDeg <= 8.5;
@@ -2049,22 +2050,41 @@ public sealed class MainForm : Form
                     (timeToCenterMs.HasValue && timeToCenterMs.Value <= 220.0 && edgeDiffDeg <= 9.5)
                 );
         }
+
+        if (hardFallbackDue && !hardFallbackFireReady)
+        {
+            var roundAgeMs = nowMs - _roundStartMs;
+            var deepDeadline = roundAgeMs >= (AppConstants.RoundTimeoutMs * 0.96);
+            var hasTimingSignal = result.Overlap || timeToCenterMs.HasValue || _roundBestEffDiff <= 20.0;
+            deadlineRescueFireReady = deepDeadline && hasTimingSignal;
+        }
+
+        var roundLockedForPress = canFireRound && !string.IsNullOrWhiteSpace(_roundKey);
+        var keyEvidenceForPress = keyEvidenceOk || (roundLockedForPress && (fallbackDue || hardFallbackDue));
+        var ocrGateForPress = ocrFireAccepted ||
+            (roundLockedForPress &&
+                (fallbackDue || hardFallbackDue) &&
+                scoreOk &&
+                marginOk &&
+                keyStable &&
+                !ocr.IsAmbiguous);
+
         var canPress =
             AppConstants.AutoPressOnOverlap &&
             canFireRound &&
             !string.IsNullOrWhiteSpace(keyToPress) &&
-            keyEvidenceOk &&
+            keyEvidenceForPress &&
             isFreshOcrForPress &&
-            scoreOk &&
-            ocrFireAccepted &&
+            ocrGateForPress &&
             cooldownOk &&
             (
                 schedulerFireReady ||
                 opportunisticFireReady ||
                 fallbackFireReady ||
-                hardFallbackFireReady
+                hardFallbackFireReady ||
+                deadlineRescueFireReady
             );
-        var fallbackFireNow = canPress && (fallbackDue || hardFallbackDue);
+        var fallbackFireNow = canPress && (fallbackDue || hardFallbackDue || deadlineRescueFireReady);
         var sinceLastPressMs = _lastPressMs > 0 ? (nowMs - _lastPressMs) : -1.0;
 
         var redAngleText = result.RedAngle.HasValue ? result.RedAngle.Value.ToString("0.0") : "-";
@@ -2086,14 +2106,15 @@ public sealed class MainForm : Form
                     keyStable ? null : "unstable-key",
                     isKeyOk ? null : "bad-key",
                     isFreshOcrForPress ? null : "stale-ocr",
-                    keyEvidenceOk ? null : "key-mismatch",
+                    keyEvidenceForPress ? null : "key-mismatch",
+                    ocrGateForPress ? null : "ocr-gate",
                     qualityFireOk ? null : "quality-low",
                     centerReliable ? null : "center-unreliable",
                     centerReliable && centerDiffDeg > centerFireLimit ? "center-far" : null,
                     schedulerEdgeOk ? null : "edge-far",
                     fallbackDue && !fallbackWindowReady ? "fallback-window" : null,
                     hardFallbackDue && !hardFallbackFireReady ? "hard-fallback-window" : null,
-                    schedulerFireReady || fallbackFireReady || opportunisticFireReady || hardFallbackFireReady ? null : "wait-schedule",
+                    schedulerFireReady || fallbackFireReady || opportunisticFireReady || hardFallbackFireReady || deadlineRescueFireReady ? null : "wait-schedule",
                 }.Where(x => x is not null));
 
             var dbgReliable = reliableKey ?? "-";
@@ -2101,7 +2122,7 @@ public sealed class MainForm : Form
                 _lastDbgRoundId != _roundId ||
                 _lastDbgRoundState != _roundState ||
                 !_lastDbgReliableKey.Equals(dbgReliable, StringComparison.OrdinalIgnoreCase);
-            var dbgAction = canPress || schedulerFireReady || fallbackFireReady || opportunisticFireReady || hardFallbackFireReady;
+            var dbgAction = canPress || schedulerFireReady || fallbackFireReady || opportunisticFireReady || hardFallbackFireReady || deadlineRescueFireReady;
             var dbgRejectChanged = !_lastDbgReject.Equals(rejectReason, StringComparison.Ordinal);
             var dbgMinIntervalOk = (nowMs - _lastOcrDebugLogMs) >= 220.0;
             var dbgRotationReady = _lastOcrDebugLogMs <= 0.0 || _ocrDbgRotationAccumDeg >= 360.0;
