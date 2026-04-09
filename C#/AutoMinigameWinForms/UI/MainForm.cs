@@ -1496,9 +1496,12 @@ public sealed class MainForm : Form
         var strictDiffLimit = Math.Min(AppConstants.PressStrictMaxDiffDeg, _cfg.AngleToleranceDeg * AppConstants.PressStrictTolRatio);
         var triggerDiffLimit = Math.Min(AppConstants.PressTriggerDiffDeg, strictDiffLimit);
         var isKeyOk = IsAllowedAndMapped(key, allowedKeys);
-        var isFreshOcrForPress = !usingFallbackOcr && (nowMs - _lastOcrMs) <= (AppConstants.OcrIntervalMs * 5.0);
+        var isFreshOcrForPress = (nowMs - _lastOcrMs) <= (AppConstants.OcrIntervalMs * 6.0) && (!usingFallbackOcr || keyStable);
         var isTimingOk = effectiveDiffDeg <= strictDiffLimit;
-        var isTriggerDiffOk = effectiveDiffDeg <= triggerDiffLimit;
+        var movingAwayAfterClose = _prevTimingDiff.HasValue
+            && _prevTimingDiff.Value <= (strictDiffLimit + 1.4)
+            && effectiveDiffDeg > (_prevTimingDiff.Value + 0.60);
+        var isTriggerDiffOk = effectiveDiffDeg <= triggerDiffLimit || movingAwayAfterClose;
         var fallbackCenterLimit = Math.Max(2.2, strictDiffLimit * 0.35);
         var isCenterOk = hasCenterDiff
             ? effectiveDiffDeg <= AppConstants.PressCenterMaxDiffDeg
@@ -1508,7 +1511,7 @@ public sealed class MainForm : Form
             && _prevTimingDiff.Value > triggerDiffLimit
             && effectiveDiffDeg <= triggerDiffLimit;
         var hasPredictiveTrigger = predictedCenterDiffDeg.HasValue && predictedCenterDiffDeg.Value <= triggerDiffLimit && isApproachingCenter;
-        var hasStableLock = (result.Overlap && isTimingOk) || hasPredictiveTrigger;
+        var hasStableLock = (result.Overlap && isTimingOk) || hasPredictiveTrigger || movingAwayAfterClose;
         var isStableFrame = hasStableLock && isKeyOk && scoreOk && keyStable;
         var justTouched = result.Overlap && !_wasOverlapping;
         if (justTouched)
@@ -1516,7 +1519,7 @@ public sealed class MainForm : Form
             _touchWindowUntilMs = nowMs + AppConstants.PressTouchWindowMs;
         }
         var isInTouchWindow = result.Overlap && nowMs <= _touchWindowUntilMs;
-        var hasTriggerSignal = crossedTriggerBand || (result.Overlap && isTimingOk && isInTouchWindow) || hasPredictiveTrigger;
+        var hasTriggerSignal = crossedTriggerBand || (result.Overlap && isTimingOk && isInTouchWindow) || hasPredictiveTrigger || movingAwayAfterClose;
         var hasRelaxedOverlapSignal = justTouched && result.Overlap && isKeyOk && scoreOk && keyStable && marginOk && isFreshOcrForPress;
 
         if (isStableFrame)
@@ -1539,17 +1542,18 @@ public sealed class MainForm : Form
                 _prevTimingDiff = null;
             }
         }
-        var keyToPress = AppConstants.AutoPressUseOcrKey && isKeyOk && isFreshOcrForPress ? key?.Trim().ToUpperInvariant() : null;
+        var keyToPress = AppConstants.AutoPressUseOcrKey && isKeyOk && isFreshOcrForPress ? normalizedKey : null;
         var keyChangedSinceLastPress =
-            !string.IsNullOrWhiteSpace(keyToPress) &&
+            !string.IsNullOrWhiteSpace(normalizedKey) &&
             !string.IsNullOrWhiteSpace(_lastPressedKey) &&
-            !keyToPress.Equals(_lastPressedKey, StringComparison.OrdinalIgnoreCase);
+            !normalizedKey.Equals(_lastPressedKey, StringComparison.OrdinalIgnoreCase);
         var hasMinGapFromLastPress = _lastPressMs <= 0 || (nowMs - _lastPressMs) >= 35.0;
         if (!_pressArmed && keyChangedSinceLastPress && hasMinGapFromLastPress)
         {
             _pressArmed = true;
             _clearStreak = 0;
         }
+        var hasCenterGate = isCenterOk || movingAwayAfterClose || _overlapStreak >= 2;
 
         var preciseCanPress =
             AppConstants.AutoPressOnOverlap &&
@@ -1559,7 +1563,7 @@ public sealed class MainForm : Form
             isFreshOcrForPress &&
             scoreOk &&
             keyStable &&
-            (isCenterOk || _overlapStreak >= 2) &&
+            hasCenterGate &&
             _overlapStreak >= AppConstants.PressRequireStableFrames &&
             _pressArmed &&
             (now - _lastAttempt) >= AppConstants.AttemptIntervalSec &&
@@ -1584,13 +1588,13 @@ public sealed class MainForm : Form
                     isFreshOcrForPress ? null : "stale-ocr",
                     isTimingOk ? null : "bad-timing",
                     isTriggerDiffOk ? null : "bad-trigger-diff",
-                    isCenterOk ? null : "off-center",
+                    hasCenterGate ? null : "off-center",
                     isApproachingCenter ? null : "away-center",
                     (hasTriggerSignal || hasRelaxedOverlapSignal) ? null : "no-trigger",
                 }.Where(x => x is not null));
 
             AppendLog(
-                $"OCR dbg | mode={mode} src={(usingFallbackOcr ? "hold" : "live")} overlap={(result.Overlap ? "Y" : "N")} touch={(isInTouchWindow ? "Y" : "N")} cross={(crossedTriggerBand ? "Y" : "N")} pred={(hasPredictiveTrigger ? "Y" : "N")} relax={(hasRelaxedOverlapSignal ? "Y" : "N")} arm={(_pressArmed ? "Y" : "N")} keychg={(hasNewRequiredKey ? "Y" : "N")} fresh={(isFreshOcrForPress ? "Y" : "N")} since={(sinceLastPressMs >= 0 ? sinceLastPressMs.ToString("0") : "-")}ms last={_lastPressedKey.ToUpperInvariant()} key={(key ?? "-").ToUpperInvariant()} score={score:0.000}/{_ocrMinScore:0.000} m={margin:0.000}/{_ocrMinMargin:0.000} stable={_ocrSameKeyStreak}/{AppConstants.OcrRequireStableReads} amb={(ocr.IsAmbiguous ? "Y" : "N")} diff={diffText}/{triggerDiffLimit:0.0} cDiff={centerDiffText}/{AppConstants.PressCenterMaxDiffDeg:0.0} pDiff={predDiffText} speed={(redSpeedDegPerSec.HasValue ? redSpeedDegPerSec.Value.ToString("0.0") : "-")} eff={effectiveDiffDeg:0.0} press={(preciseCanPress ? "precise" : (relaxedCanPress ? "relaxed" : "-"))} reject={(string.IsNullOrWhiteSpace(rejectReason) ? "-" : rejectReason)} | {dbg}");
+                $"OCR dbg | mode={mode} src={(usingFallbackOcr ? "hold" : "live")} overlap={(result.Overlap ? "Y" : "N")} touch={(isInTouchWindow ? "Y" : "N")} cross={(crossedTriggerBand ? "Y" : "N")} pred={(hasPredictiveTrigger ? "Y" : "N")} turn={(movingAwayAfterClose ? "Y" : "N")} relax={(hasRelaxedOverlapSignal ? "Y" : "N")} arm={(_pressArmed ? "Y" : "N")} keychg={(hasNewRequiredKey ? "Y" : "N")} fresh={(isFreshOcrForPress ? "Y" : "N")} since={(sinceLastPressMs >= 0 ? sinceLastPressMs.ToString("0") : "-")}ms last={_lastPressedKey.ToUpperInvariant()} key={(key ?? "-").ToUpperInvariant()} score={score:0.000}/{_ocrMinScore:0.000} m={margin:0.000}/{_ocrMinMargin:0.000} stable={_ocrSameKeyStreak}/{AppConstants.OcrRequireStableReads} amb={(ocr.IsAmbiguous ? "Y" : "N")} diff={diffText}/{triggerDiffLimit:0.0} cDiff={centerDiffText}/{AppConstants.PressCenterMaxDiffDeg:0.0} pDiff={predDiffText} speed={(redSpeedDegPerSec.HasValue ? redSpeedDegPerSec.Value.ToString("0.0") : "-")} eff={effectiveDiffDeg:0.0} press={(preciseCanPress ? "precise" : (relaxedCanPress ? "relaxed" : "-"))} reject={(string.IsNullOrWhiteSpace(rejectReason) ? "-" : rejectReason)} | {dbg}");
             _lastOcrDebugLogMs = nowMs;
         }
 
