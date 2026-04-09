@@ -1923,7 +1923,6 @@ public sealed class MainForm : Form
         var strictDiffLimit = Math.Min(AppConstants.PressStrictMaxDiffDeg, _cfg.AngleToleranceDeg * AppConstants.PressStrictTolRatio);
         var triggerDiffLimit = Math.Min(AppConstants.PressTriggerDiffDeg, strictDiffLimit);
         var centerGateLimit = Math.Max(AppConstants.PressCenterMaxDiffDeg, strictDiffLimit + 2.0);
-        var fallbackDiffLimit = Math.Max(centerGateLimit + 1.5, strictDiffLimit + 4.0);
         var isTimingOk = effectiveDiffDeg <= (strictDiffLimit + 1.5);
         var isCenterOk = effectiveDiffDeg <= centerGateLimit;
 
@@ -1978,7 +1977,13 @@ public sealed class MainForm : Form
         var fallbackDue = _roundState is RoundState.Armed or RoundState.Candidate
             && !_roundFallbackFired
             && nowMs >= fallbackDeadlineMs;
-        var opportunisticEdgeDue = result.Overlap && edgeDiffDeg <= Math.Min(2.6, (triggerDiffLimit * 0.30) + 0.2);
+        var opportunisticEdgeLimit = Math.Min(6.8, triggerDiffLimit + 1.4);
+        var opportunisticEdgeDue = result.Overlap && edgeDiffDeg <= opportunisticEdgeLimit;
+        var fallbackWindowDiffLimit = Math.Max(22.0, triggerDiffLimit + 12.0);
+        var fallbackWindowReady =
+            result.Overlap ||
+            edgeDiffDeg <= fallbackWindowDiffLimit ||
+            (timeToCenterMs.HasValue && timeToCenterMs.Value <= 220.0);
 
         var cooldownOk = _pressArmed &&
             (now - _lastAttempt) >= AppConstants.AttemptIntervalSec &&
@@ -1993,6 +1998,9 @@ public sealed class MainForm : Form
             !string.IsNullOrWhiteSpace(majorityKey) &&
             _roundKey.Equals(majorityKey, StringComparison.OrdinalIgnoreCase);
         var keyEvidenceOk = currentRoundKeyConfirmed || (majorityRoundKeyConfirmed && !ocrRoundAccepted);
+        var schedulerFireReady = schedulerDue && isTimingOk && isCenterOk;
+        var opportunisticFireReady = opportunisticEdgeDue && edgeDiffDeg <= opportunisticEdgeLimit;
+        var fallbackFireReady = fallbackDue && fallbackWindowReady;
         var canPress =
             AppConstants.AutoPressOnOverlap &&
             canFireRound &&
@@ -2003,9 +2011,9 @@ public sealed class MainForm : Form
             ocrFireAccepted &&
             cooldownOk &&
             (
-                (schedulerDue && isTimingOk && isCenterOk) ||
-                (opportunisticEdgeDue && isTimingOk) ||
-                (fallbackDue && result.Overlap && effectiveDiffDeg <= fallbackDiffLimit)
+                schedulerFireReady ||
+                opportunisticFireReady ||
+                fallbackFireReady
             );
         var fallbackFireNow = canPress && fallbackDue;
         var sinceLastPressMs = _lastPressMs > 0 ? (nowMs - _lastPressMs) : -1.0;
@@ -2032,7 +2040,8 @@ public sealed class MainForm : Form
                     keyEvidenceOk ? null : "key-mismatch",
                     isTimingOk ? null : "bad-timing",
                     isCenterOk ? null : "off-center",
-                    schedulerDue || fallbackDue || opportunisticEdgeDue ? null : "wait-schedule",
+                    fallbackDue && !fallbackWindowReady ? "fallback-window" : null,
+                    schedulerFireReady || fallbackFireReady || opportunisticFireReady ? null : "wait-schedule",
                 }.Where(x => x is not null));
 
             var dbgReliable = reliableKey ?? "-";
@@ -2040,7 +2049,7 @@ public sealed class MainForm : Form
                 _lastDbgRoundId != _roundId ||
                 _lastDbgRoundState != _roundState ||
                 !_lastDbgReliableKey.Equals(dbgReliable, StringComparison.OrdinalIgnoreCase);
-            var dbgAction = canPress || schedulerDue || fallbackDue || opportunisticEdgeDue;
+            var dbgAction = canPress || schedulerFireReady || fallbackFireReady || opportunisticFireReady;
             var dbgRejectChanged = !_lastDbgReject.Equals(rejectReason, StringComparison.Ordinal);
             var dbgMinIntervalOk = (nowMs - _lastOcrDebugLogMs) >= 220.0;
             var dbgRotationReady = _lastOcrDebugLogMs <= 0.0 || _ocrDbgRotationAccumDeg >= 360.0;
