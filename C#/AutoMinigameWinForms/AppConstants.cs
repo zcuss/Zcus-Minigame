@@ -10,8 +10,8 @@ public static class AppConstants
     public const int MaxRenderFps = 0;
     public const int MaxIdleRenderFps = 30;
     public const int OcrIntervalMs = 30;
-    public const int OcrHoldMs = 140;
-    public const int OcrRequireStableReads = 1;
+    public const int OcrHoldMs = 120;
+    public const int OcrRequireStableReads = 2;
     public const double AttemptIntervalSec = 0.03;
     public const int WindowRefreshMs = 200;
 
@@ -25,9 +25,9 @@ public static class AppConstants
     public const int PressRearmClearFrames = 1;
     public const int PressTouchWindowMs = 160;
     public const double PressCenterMaxDiffDeg = 8.5;
-    public const double PressPredictionLeadMs = 130.0;
-    public const double PressPredictionMaxLeadDeg = 55.0;
-    public const double PressPredictionMinSpeedDegPerSec = 40.0;
+    public const double PressPredictionLeadMs = 70.0;
+    public const double PressPredictionMaxLeadDeg = 28.0;
+    public const double PressPredictionMinSpeedDegPerSec = 60.0;
     public const double PressPredictionMaxSpeedDegPerSec = 900.0;
 
     public const int OcrBoxW = 40;

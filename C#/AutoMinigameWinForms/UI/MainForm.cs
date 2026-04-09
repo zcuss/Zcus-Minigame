@@ -1496,7 +1496,7 @@ public sealed class MainForm : Form
         var strictDiffLimit = Math.Min(AppConstants.PressStrictMaxDiffDeg, _cfg.AngleToleranceDeg * AppConstants.PressStrictTolRatio);
         var triggerDiffLimit = Math.Min(AppConstants.PressTriggerDiffDeg, strictDiffLimit);
         var isKeyOk = IsAllowedAndMapped(key, allowedKeys);
-        var isFreshOcrForPress = !usingFallbackOcr && (nowMs - _lastOcrMs) <= (AppConstants.OcrIntervalMs * 8.0);
+        var isFreshOcrForPress = !usingFallbackOcr && (nowMs - _lastOcrMs) <= (AppConstants.OcrIntervalMs * 5.0);
         var isTimingOk = effectiveDiffDeg <= strictDiffLimit;
         var isTriggerDiffOk = effectiveDiffDeg <= triggerDiffLimit;
         var fallbackCenterLimit = Math.Max(2.2, strictDiffLimit * 0.35);
@@ -1554,13 +1554,8 @@ public sealed class MainForm : Form
             _pressArmed &&
             (now - _lastAttempt) >= AppConstants.AttemptIntervalSec &&
             (now - _lastPress) >= AppConstants.PressDelaySec;
-        var relaxedCanPress =
-            AppConstants.AutoPressOnOverlap &&
-            hasRelaxedOverlapSignal &&
-            _pressArmed &&
-            (now - _lastAttempt) >= AppConstants.AttemptIntervalSec &&
-            (now - _lastPress) >= AppConstants.PressDelaySec;
-        var canPress = preciseCanPress || relaxedCanPress;
+        var relaxedCanPress = false;
+        var canPress = preciseCanPress;
         var sinceLastPressMs = _lastPressMs > 0 ? (nowMs - _lastPressMs) : -1.0;
 
         _statusLabel.Text = _scanning
