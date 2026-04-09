@@ -1979,9 +1979,13 @@ public sealed class MainForm : Form
         var fallbackDue = _roundState is RoundState.Armed or RoundState.Candidate
             && !_roundFallbackFired
             && nowMs >= fallbackDeadlineMs;
-        var schedulerEdgeLimit = Math.Max(2.6, triggerDiffLimit - 1.2);
+        var hardFallbackDeadlineMs = _roundStartMs + (AppConstants.RoundTimeoutMs * 0.94);
+        var hardFallbackDue = _roundState is RoundState.Armed or RoundState.Candidate
+            && !_roundFallbackFired
+            && nowMs >= hardFallbackDeadlineMs;
+        var schedulerEdgeLimit = triggerDiffLimit + 1.5;
         var schedulerEdgeOk = edgeDiffDeg <= schedulerEdgeLimit;
-        var opportunisticEdgeLimit = 2.2;
+        var opportunisticEdgeLimit = 4.0;
         var opportunisticEdgeDue = result.Overlap &&
             !schedulerDue &&
             !timeToCenterMs.HasValue &&
@@ -1991,7 +1995,7 @@ public sealed class MainForm : Form
             result.Overlap ||
             edgeDiffDeg <= fallbackWindowDiffLimit ||
             (timeToCenterMs.HasValue && timeToCenterMs.Value <= 220.0);
-        var fallbackEdgeLimit = Math.Max(5.5, triggerDiffLimit - 2.0);
+        var fallbackEdgeLimit = triggerDiffLimit + 2.6;
 
         var cooldownOk = _pressArmed &&
             (now - _lastAttempt) >= AppConstants.AttemptIntervalSec &&
@@ -2011,7 +2015,13 @@ public sealed class MainForm : Form
         var fallbackFireReady = fallbackDue &&
             (
                 (result.Overlap && edgeDiffDeg <= fallbackEdgeLimit) ||
-                (!result.Overlap && fallbackWindowReady && edgeDiffDeg <= 8.0)
+                (!result.Overlap && fallbackWindowReady && edgeDiffDeg <= 12.0)
+            );
+        var hardFallbackFireReady = hardFallbackDue &&
+            (
+                (result.Overlap && edgeDiffDeg <= 18.0) ||
+                (timeToCenterMs.HasValue && timeToCenterMs.Value <= 280.0) ||
+                edgeDiffDeg <= 12.0
             );
         var canPress =
             AppConstants.AutoPressOnOverlap &&
@@ -2025,9 +2035,10 @@ public sealed class MainForm : Form
             (
                 schedulerFireReady ||
                 opportunisticFireReady ||
-                fallbackFireReady
+                fallbackFireReady ||
+                hardFallbackFireReady
             );
-        var fallbackFireNow = canPress && fallbackDue;
+        var fallbackFireNow = canPress && (fallbackDue || hardFallbackDue);
         var sinceLastPressMs = _lastPressMs > 0 ? (nowMs - _lastPressMs) : -1.0;
 
         var redAngleText = result.RedAngle.HasValue ? result.RedAngle.Value.ToString("0.0") : "-";
@@ -2054,7 +2065,8 @@ public sealed class MainForm : Form
                     isCenterOk ? null : "off-center",
                     schedulerEdgeOk ? null : "edge-far",
                     fallbackDue && !fallbackWindowReady ? "fallback-window" : null,
-                    schedulerFireReady || fallbackFireReady || opportunisticFireReady ? null : "wait-schedule",
+                    hardFallbackDue && !hardFallbackFireReady ? "hard-fallback-window" : null,
+                    schedulerFireReady || fallbackFireReady || opportunisticFireReady || hardFallbackFireReady ? null : "wait-schedule",
                 }.Where(x => x is not null));
 
             var dbgReliable = reliableKey ?? "-";
@@ -2062,14 +2074,14 @@ public sealed class MainForm : Form
                 _lastDbgRoundId != _roundId ||
                 _lastDbgRoundState != _roundState ||
                 !_lastDbgReliableKey.Equals(dbgReliable, StringComparison.OrdinalIgnoreCase);
-            var dbgAction = canPress || schedulerFireReady || fallbackFireReady || opportunisticFireReady;
+            var dbgAction = canPress || schedulerFireReady || fallbackFireReady || opportunisticFireReady || hardFallbackFireReady;
             var dbgRejectChanged = !_lastDbgReject.Equals(rejectReason, StringComparison.Ordinal);
             var dbgMinIntervalOk = (nowMs - _lastOcrDebugLogMs) >= 220.0;
             var dbgRotationReady = _lastOcrDebugLogMs <= 0.0 || _ocrDbgRotationAccumDeg >= 360.0;
             if (dbgMinIntervalOk && dbgRotationReady && (dbgStateChanged || dbgAction || dbgRejectChanged))
             {
                 AppendLog(
-                    $"OCR dbg | mode={mode} round={_roundId}/{_roundState} rKey={_roundKey} rk={_rearmKey} maj={(majorityKey ?? "-")} rel={dbgReliable} overlap={(result.Overlap ? "Y" : "N")} sch={(schedulerDue ? "Y" : "N")} op={(opportunisticEdgeDue ? "Y" : "N")} fb={(fallbackDue ? "Y" : "N")} arm={(_pressArmed ? "Y" : "N")} fresh={(isFreshOcrForPress ? "Y" : "N")} since={(sinceLastPressMs >= 0 ? sinceLastPressMs.ToString("0") : "-")}ms key={(key ?? "-").ToUpperInvariant()} score={score:0.000}/{_ocrMinScore:0.000} m={margin:0.000} thr={roundMarginThreshold:0.000}/{fireMarginThreshold:0.000} stable={_ocrSameKeyStreak}/{AppConstants.OcrRequireStableReads} diff={diffText}/{triggerDiffLimit:0.0} cDiff={centerDiffText}/{centerGateLimit:0.0} edge={edgeDiffDeg:0.0}/{schedulerEdgeLimit:0.0} eff={effectiveDiffDeg:0.0} lag={(double.IsNaN(scheduleLagMs) ? "-" : scheduleLagMs.ToString("0"))} ttc={ttcText} lat={_pressLatencyMsRuntime:0}ms press={(canPress ? (fallbackFireNow ? "fallback" : "scheduled") : "-")} reject={(string.IsNullOrWhiteSpace(rejectReason) ? "-" : rejectReason)} | {dbg}");
+                    $"OCR dbg | mode={mode} round={_roundId}/{_roundState} rKey={_roundKey} rk={_rearmKey} maj={(majorityKey ?? "-")} rel={dbgReliable} overlap={(result.Overlap ? "Y" : "N")} sch={(schedulerDue ? "Y" : "N")} op={(opportunisticEdgeDue ? "Y" : "N")} fb={(fallbackDue ? "Y" : "N")} hfb={(hardFallbackDue ? "Y" : "N")} arm={(_pressArmed ? "Y" : "N")} fresh={(isFreshOcrForPress ? "Y" : "N")} since={(sinceLastPressMs >= 0 ? sinceLastPressMs.ToString("0") : "-")}ms key={(key ?? "-").ToUpperInvariant()} score={score:0.000}/{_ocrMinScore:0.000} m={margin:0.000} thr={roundMarginThreshold:0.000}/{fireMarginThreshold:0.000} stable={_ocrSameKeyStreak}/{AppConstants.OcrRequireStableReads} diff={diffText}/{triggerDiffLimit:0.0} cDiff={centerDiffText}/{centerGateLimit:0.0} edge={edgeDiffDeg:0.0}/{schedulerEdgeLimit:0.0} eff={effectiveDiffDeg:0.0} lag={(double.IsNaN(scheduleLagMs) ? "-" : scheduleLagMs.ToString("0"))} ttc={ttcText} lat={_pressLatencyMsRuntime:0}ms press={(canPress ? (fallbackFireNow ? "fallback" : "scheduled") : "-")} reject={(string.IsNullOrWhiteSpace(rejectReason) ? "-" : rejectReason)} | {dbg}");
                 _lastOcrDebugLogMs = nowMs;
                 _ocrDbgRotationAccumDeg = 0.0;
                 _lastDbgRoundId = _roundId;
