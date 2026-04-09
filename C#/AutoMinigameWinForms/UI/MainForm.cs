@@ -1890,13 +1890,9 @@ public sealed class MainForm : Form
         }
 
         var edgeDiffDeg = result.BestDiff ?? 999.0;
-        var effectiveDiffDeg = edgeDiffDeg;
-        if (hasCenterDiff)
-        {
-            effectiveDiffDeg = edgeDiffDeg < 998.0
-                ? Math.Min(centerDiffDeg, edgeDiffDeg + 9.0)
-                : centerDiffDeg;
-        }
+        var centerReliable = hasCenterDiff && centerDiffDeg < 120.0;
+        var centerForTimingDiff = centerReliable ? centerDiffDeg : 999.0;
+        var effectiveDiffDeg = centerReliable ? centerDiffDeg : edgeDiffDeg;
         _roundBestEffDiff = Math.Min(_roundBestEffDiff, effectiveDiffDeg);
 
         TryReleaseRearmToIdle(nowMs, result.Overlap, reliableKey);
@@ -1925,13 +1921,14 @@ public sealed class MainForm : Form
         var strictDiffLimit = Math.Min(AppConstants.PressStrictMaxDiffDeg, _cfg.AngleToleranceDeg * AppConstants.PressStrictTolRatio);
         var triggerDiffLimit = Math.Min(AppConstants.PressTriggerDiffDeg, strictDiffLimit);
         var centerGateLimit = Math.Max(AppConstants.PressCenterMaxDiffDeg, strictDiffLimit + 2.0);
-        var isTimingOk = effectiveDiffDeg <= (strictDiffLimit + 1.5);
-        var isCenterOk = effectiveDiffDeg <= centerGateLimit;
-        var centerReliable = hasCenterDiff && centerDiffDeg < 120.0;
         var centerFireLimit = Math.Min(14.0, centerGateLimit + 2.0);
+        var isTimingOk = centerReliable
+            ? centerForTimingDiff <= (centerFireLimit + 2.0)
+            : edgeDiffDeg <= (triggerDiffLimit + 2.0);
+        var isCenterOk = !centerReliable || centerForTimingDiff <= centerFireLimit;
 
         var signedToCenterDeg = (double?)null;
-        if (result.RedAngle.HasValue && hasCenterDiff)
+        if (result.RedAngle.HasValue && centerReliable)
         {
             signedToCenterDeg = SignedDeltaDeg(result.RedAngle.Value, centerAngleDeg);
         }
@@ -1981,13 +1978,13 @@ public sealed class MainForm : Form
         var fallbackDue = _roundState is RoundState.Armed or RoundState.Candidate
             && !_roundFallbackFired
             && nowMs >= fallbackDeadlineMs;
-        var hardFallbackDeadlineMs = _roundStartMs + (AppConstants.RoundTimeoutMs * 0.94);
+        var hardFallbackDeadlineMs = _roundStartMs + (AppConstants.RoundTimeoutMs * 0.88);
         var hardFallbackDue = _roundState is RoundState.Armed or RoundState.Candidate
             && !_roundFallbackFired
             && nowMs >= hardFallbackDeadlineMs;
-        var schedulerEdgeLimit = 4.0;
+        var schedulerEdgeLimit = 8.0;
         var schedulerEdgeOk = edgeDiffDeg <= schedulerEdgeLimit;
-        var opportunisticEdgeLimit = 3.6;
+        var opportunisticEdgeLimit = 6.5;
         var opportunisticEdgeDue = result.Overlap &&
             !schedulerDue &&
             !timeToCenterMs.HasValue &&
@@ -1997,7 +1994,7 @@ public sealed class MainForm : Form
             result.Overlap ||
             edgeDiffDeg <= fallbackWindowDiffLimit ||
             (timeToCenterMs.HasValue && timeToCenterMs.Value <= 220.0);
-        var fallbackEdgeLimit = 5.0;
+        var fallbackEdgeLimit = 8.5;
 
         var cooldownOk = _pressArmed &&
             (now - _lastAttempt) >= AppConstants.AttemptIntervalSec &&
@@ -2013,19 +2010,19 @@ public sealed class MainForm : Form
             _roundKey.Equals(majorityKey, StringComparison.OrdinalIgnoreCase);
         var keyEvidenceOk = currentRoundKeyConfirmed || (majorityRoundKeyConfirmed && !ocrRoundAccepted);
         var schedulerFireReady = schedulerDue &&
-            ((centerReliable && centerDiffDeg <= centerFireLimit) || (!centerReliable && schedulerEdgeOk));
+            ((centerReliable && centerForTimingDiff <= centerFireLimit) || (!centerReliable && schedulerEdgeOk));
         var opportunisticFireReady = opportunisticEdgeDue && edgeDiffDeg <= opportunisticEdgeLimit;
         var fallbackFireReady = fallbackDue &&
             (
-                (centerReliable && centerDiffDeg <= (centerFireLimit + 1.0)) ||
+                (centerReliable && centerForTimingDiff <= (centerFireLimit + 1.5)) ||
                 (result.Overlap && edgeDiffDeg <= fallbackEdgeLimit)
             );
         var hardFallbackFireReady = hardFallbackDue &&
             (
-                (centerReliable && centerDiffDeg <= (centerFireLimit + 6.0)) ||
+                (centerReliable && centerForTimingDiff <= (centerFireLimit + 7.5)) ||
                 (result.Overlap && edgeDiffDeg <= 18.0) ||
                 (timeToCenterMs.HasValue && timeToCenterMs.Value <= 280.0) ||
-                edgeDiffDeg <= 12.0
+                edgeDiffDeg <= 14.0
             );
         var canPress =
             AppConstants.AutoPressOnOverlap &&
