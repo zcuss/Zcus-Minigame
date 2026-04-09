@@ -2057,16 +2057,19 @@ public sealed class MainForm : Form
             var deepDeadline = roundAgeMs >= (AppConstants.RoundTimeoutMs * 0.97);
             var hasTimingSignal =
                 (result.Overlap && edgeDiffDeg <= 12.0) ||
-                (timeToCenterMs.HasValue && timeToCenterMs.Value <= 180.0) ||
-                _roundBestEffDiff <= 14.0;
+                (timeToCenterMs.HasValue && timeToCenterMs.Value <= 180.0);
             deadlineRescueFireReady = deepDeadline && hasTimingSignal;
         }
 
         var roundLockedForPress = canFireRound && !string.IsNullOrWhiteSpace(_roundKey);
-        var keyEvidenceForPress = keyEvidenceOk || (roundLockedForPress && (fallbackDue || hardFallbackDue));
+        var fallbackKeyEvidenceOk =
+            roundLockedForPress &&
+            (fallbackDue || hardFallbackDue) &&
+            !string.IsNullOrWhiteSpace(majorityKey) &&
+            _roundKey.Equals(majorityKey, StringComparison.OrdinalIgnoreCase);
+        var keyEvidenceForPress = keyEvidenceOk || fallbackKeyEvidenceOk;
         var ocrGateForPress = ocrFireAccepted ||
-            (roundLockedForPress &&
-                (fallbackDue || hardFallbackDue) &&
+            (fallbackKeyEvidenceOk &&
                 scoreOk &&
                 marginOk &&
                 keyStable &&
@@ -2079,6 +2082,7 @@ public sealed class MainForm : Form
             keyEvidenceForPress &&
             isFreshOcrForPress &&
             ocrGateForPress &&
+            qualityFireOk &&
             cooldownOk &&
             (
                 schedulerFireReady ||
