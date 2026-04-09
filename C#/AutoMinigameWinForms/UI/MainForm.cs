@@ -1831,9 +1831,19 @@ public sealed class MainForm : Form
         var ocrFireAccepted = isKeyOk && scoreOk && fireMarginOk && keyStable && !ocr.IsAmbiguous;
         PushOcrMajorityKey(normalizedKey, ocrRoundAccepted);
         var majorityKey = ResolveMajorityKey();
-        var reliableKey = !string.IsNullOrWhiteSpace(majorityKey)
-            ? majorityKey
-            : (ocrRoundAccepted ? normalizedKey : null);
+        string? reliableKey;
+        if (ocrRoundAccepted)
+        {
+            reliableKey = normalizedKey;
+        }
+        else if (!string.IsNullOrWhiteSpace(majorityKey))
+        {
+            reliableKey = majorityKey;
+        }
+        else
+        {
+            reliableKey = null;
+        }
 
         var centerDiffDeg = 999.0;
         var centerAngleDeg = 0.0;
@@ -1921,11 +1931,13 @@ public sealed class MainForm : Form
 
         var canFireRound = _roundState is RoundState.Armed or RoundState.Candidate;
         var keyToPress = canFireRound && !string.IsNullOrWhiteSpace(_roundKey) ? _roundKey : reliableKey;
-        var keyEvidenceOk = !string.IsNullOrWhiteSpace(_roundKey) &&
-            (
-                (!string.IsNullOrWhiteSpace(majorityKey) && _roundKey.Equals(majorityKey, StringComparison.OrdinalIgnoreCase)) ||
-                (ocrRoundAccepted && _roundKey.Equals(normalizedKey, StringComparison.OrdinalIgnoreCase))
-            );
+        var currentRoundKeyConfirmed = ocrRoundAccepted &&
+            !string.IsNullOrWhiteSpace(_roundKey) &&
+            _roundKey.Equals(normalizedKey, StringComparison.OrdinalIgnoreCase);
+        var majorityRoundKeyConfirmed = !string.IsNullOrWhiteSpace(_roundKey) &&
+            !string.IsNullOrWhiteSpace(majorityKey) &&
+            _roundKey.Equals(majorityKey, StringComparison.OrdinalIgnoreCase);
+        var keyEvidenceOk = currentRoundKeyConfirmed || (majorityRoundKeyConfirmed && !ocrRoundAccepted);
         var canPress =
             AppConstants.AutoPressOnOverlap &&
             canFireRound &&
