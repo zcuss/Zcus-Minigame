@@ -39,13 +39,14 @@ public sealed class OcrEngine : IDisposable
         var w = frameBgr.Cols;
         var halfW = Math.Max(1, boxW / 2);
         var halfH = Math.Max(1, boxH / 2);
+        const int cropPad = 4;
         var cx = center.X + ocrOffsetX;
         var cy = center.Y + ocrOffsetY;
 
-        var x1 = Math.Max(0, cx - halfW);
-        var x2 = Math.Min(w, cx + halfW);
-        var y1 = Math.Max(0, cy - halfH);
-        var y2 = Math.Min(h, cy + halfH);
+        var x1 = Math.Max(0, cx - halfW - cropPad);
+        var x2 = Math.Min(w, cx + halfW + cropPad);
+        var y1 = Math.Max(0, cy - halfH - cropPad);
+        var y2 = Math.Min(h, cy + halfH + cropPad);
 
         if (x2 <= x1 || y2 <= y1)
         {
@@ -78,6 +79,7 @@ public sealed class OcrEngine : IDisposable
         using var kernel = Cv2.GetStructuringElement(MorphShapes.Rect, new OpenCvSharp.Size(2, 2));
         Cv2.MorphologyEx(white, white, MorphTypes.Close, kernel, iterations: 1);
         Cv2.Dilate(white, white, kernel, iterations: 1);
+        Cv2.MorphologyEx(white, white, MorphTypes.Open, kernel, iterations: 1);
 
         Cv2.FindContours(white, out Point[][] contours, out _, RetrievalModes.External, ContourApproximationModes.ApproxSimple);
         if (contours.Length == 0)
@@ -85,15 +87,49 @@ public sealed class OcrEngine : IDisposable
             return new OcrResult(null, 0.0, "w:0.00 a:0.00", new Rect(x1, y1, x2 - x1, y2 - y1));
         }
 
-        var valid = contours
-            .Where(c => Cv2.ContourArea(c) >= 12.0)
-            .OrderByDescending(c => Cv2.ContourArea(c))
-            .Take(8)
-            .ToArray();
+        var cropCx = white.Cols / 2.0;
+        var cropCy = white.Rows / 2.0;
+        var maxArea = Math.Max(20.0, (white.Cols * white.Rows) * 0.72);
+        var candidates = contours
+            .Select(c =>
+            {
+                var rect = Cv2.BoundingRect(c);
+                var area = Cv2.ContourArea(c);
+                var rcx = rect.X + (rect.Width / 2.0);
+                var rcy = rect.Y + (rect.Height / 2.0);
+                var dist = Math.Sqrt(((rcx - cropCx) * (rcx - cropCx)) + ((rcy - cropCy) * (rcy - cropCy)));
+                return (rect, area, rcx, rcy, dist);
+            })
+            .Where(x => x.area >= 10.0 && x.area <= maxArea)
+            .OrderBy(x => x.dist)
+            .ThenByDescending(x => x.area)
+            .ToList();
 
-        if (valid.Length == 0)
+        if (candidates.Count == 0)
         {
             return new OcrResult(null, 0.0, "w:0.00 a:0.00", new Rect(x1, y1, x2 - x1, y2 - y1));
+        }
+
+        var seed = candidates[0];
+        var seedRadius = Math.Max(8.0, Math.Max(seed.rect.Width, seed.rect.Height) * 0.75);
+        var mergePad = 3;
+        var selected = candidates
+            .Where(x =>
+            {
+                var closeCenter = Math.Sqrt(((x.rcx - seed.rcx) * (x.rcx - seed.rcx)) + ((x.rcy - seed.rcy) * (x.rcy - seed.rcy))) <= seedRadius;
+                var closeRect =
+                    x.rect.X <= (seed.rect.Right + mergePad) &&
+                    (x.rect.Right + mergePad) >= seed.rect.X &&
+                    x.rect.Y <= (seed.rect.Bottom + mergePad) &&
+                    (x.rect.Bottom + mergePad) >= seed.rect.Y;
+                return closeCenter || closeRect;
+            })
+            .Select(x => x.rect)
+            .ToList();
+
+        if (selected.Count == 0)
+        {
+            selected.Add(seed.rect);
         }
 
         var bx = int.MaxValue;
@@ -101,19 +137,19 @@ public sealed class OcrEngine : IDisposable
         var ex = int.MinValue;
         var ey = int.MinValue;
 
-        foreach (var cnt in valid)
+        foreach (var rect in selected)
         {
-            var rect = Cv2.BoundingRect(cnt);
             bx = Math.Min(bx, rect.X);
             by = Math.Min(by, rect.Y);
             ex = Math.Max(ex, rect.Right);
             ey = Math.Max(ey, rect.Bottom);
         }
 
-        bx = Math.Max(0, bx);
-        by = Math.Max(0, by);
-        ex = Math.Min(white.Cols, ex);
-        ey = Math.Min(white.Rows, ey);
+        const int roiPad = 2;
+        bx = Math.Max(0, bx - roiPad);
+        by = Math.Max(0, by - roiPad);
+        ex = Math.Min(white.Cols, ex + roiPad);
+        ey = Math.Min(white.Rows, ey + roiPad);
         var roiRect = new Rect(bx, by, Math.Max(1, ex - bx), Math.Max(1, ey - by));
 
         using var roi = new Mat(white, roiRect);
@@ -137,6 +173,7 @@ public sealed class OcrEngine : IDisposable
         var oy = (AppConstants.OcrTemplateSize - nh) / 2;
         using var normRoi = new Mat(norm, new Rect(ox, oy, nw, nh));
         resized.CopyTo(normRoi);
+        var normCount = Cv2.CountNonZero(norm);
 
         var keys = allowedKeys ?? _templates.Keys;
         var scores = new List<(string key, double score)>();
@@ -155,8 +192,18 @@ public sealed class OcrEngine : IDisposable
                 using var uni = new Mat();
                 Cv2.BitwiseAnd(norm, tpl, inter);
                 Cv2.BitwiseOr(norm, tpl, uni);
-                var upx = Cv2.CountNonZero(uni);
-                var sc = upx > 0 ? Cv2.CountNonZero(inter) / (double)upx : 0.0;
+                var interCount = Cv2.CountNonZero(inter);
+                var unionCount = Cv2.CountNonZero(uni);
+                var tplCount = Cv2.CountNonZero(tpl);
+                var iou = unionCount > 0 ? interCount / (double)unionCount : 0.0;
+                var diceDen = normCount + tplCount;
+                var dice = diceDen > 0 ? (2.0 * interCount) / diceDen : 0.0;
+                var sc = (iou * 0.55) + (dice * 0.45);
+                if (key.Equals("s", StringComparison.OrdinalIgnoreCase))
+                {
+                    sc *= 1.04;
+                }
+                sc = Math.Min(1.0, sc);
                 if (sc > best)
                 {
                     best = sc;
