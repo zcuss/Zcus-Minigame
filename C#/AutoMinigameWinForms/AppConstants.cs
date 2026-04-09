@@ -38,7 +38,7 @@ public static class AppConstants
     public const int LiveProfileCaptureMinSize = 160;
     public const int LiveProfileOcrBoxMinSize = 36;
     public const int LiveProfileOcrMinScoreX100 = 8;
-    public const int LiveProfileOcrMinMarginX100 = 5;
+    public const int LiveProfileOcrMinMarginX100 = 3;
     public const int LiveProfilePressLatencyMs = 62;
     public const bool LiveProfilePressLatencyAutoTune = true;
     public const double LiveProfileFallbackDeadlineRatio = 0.78;

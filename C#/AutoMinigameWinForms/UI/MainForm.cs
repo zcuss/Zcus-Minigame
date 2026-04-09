@@ -71,6 +71,10 @@ public sealed class MainForm : Form
     private bool _usingFallbackRegion;
     private double _lastLicenseRevalidateAtSec;
     private double _lastOcrDebugLogMs;
+    private int _lastDbgRoundId = -1;
+    private RoundState _lastDbgRoundState = RoundState.Idle;
+    private string _lastDbgReliableKey = string.Empty;
+    private string _lastDbgReject = string.Empty;
     private RoundState _roundState = RoundState.Idle;
     private int _roundId;
     private string _roundKey = string.Empty;
@@ -854,6 +858,11 @@ public sealed class MainForm : Form
         _rearmKey = string.Empty;
         _rearmStartMs = 0.0;
         _ocrMajorityQueue.Clear();
+        _lastOcrDebugLogMs = 0.0;
+        _lastDbgRoundId = -1;
+        _lastDbgRoundState = RoundState.Idle;
+        _lastDbgReliableKey = string.Empty;
+        _lastDbgReject = string.Empty;
     }
 
     private void ResetSessionMetrics()
@@ -1540,7 +1549,9 @@ public sealed class MainForm : Form
         cfg.OcrBoxW = Math.Max(cfg.OcrBoxW, AppConstants.LiveProfileOcrBoxMinSize);
         cfg.OcrBoxH = Math.Max(cfg.OcrBoxH, AppConstants.LiveProfileOcrBoxMinSize);
         cfg.OcrMinScoreX100 = Math.Max(cfg.OcrMinScoreX100, AppConstants.LiveProfileOcrMinScoreX100);
-        cfg.OcrMinMarginX100 = Math.Max(cfg.OcrMinMarginX100, AppConstants.LiveProfileOcrMinMarginX100);
+        cfg.OcrMinMarginX100 = cfg.OcrMinMarginX100 <= 0
+            ? AppConstants.LiveProfileOcrMinMarginX100
+            : Math.Min(cfg.OcrMinMarginX100, AppConstants.LiveProfileOcrMinMarginX100);
 
         cfg.PressLatencyMs = cfg.PressLatencyMs <= 0 ? AppConstants.LiveProfilePressLatencyMs : cfg.PressLatencyMs;
         cfg.PressLatencyAutoTune = cfg.PressLatencyAutoTune || AppConstants.LiveProfilePressLatencyAutoTune;
@@ -1861,7 +1872,14 @@ public sealed class MainForm : Form
             }
         }
 
-        var effectiveDiffDeg = hasCenterDiff ? centerDiffDeg : (result.BestDiff ?? 999.0);
+        var edgeDiffDeg = result.BestDiff ?? 999.0;
+        var effectiveDiffDeg = edgeDiffDeg;
+        if (hasCenterDiff)
+        {
+            effectiveDiffDeg = edgeDiffDeg < 998.0
+                ? Math.Min(centerDiffDeg, edgeDiffDeg + 9.0)
+                : centerDiffDeg;
+        }
         _roundBestEffDiff = Math.Min(_roundBestEffDiff, effectiveDiffDeg);
 
         TryReleaseRearmToIdle(nowMs, result.Overlap, reliableKey);
@@ -1915,15 +1933,37 @@ public sealed class MainForm : Form
             _roundScheduleFireAtMs = nowMs + timeToCenterMs.Value - _pressLatencyMsRuntime;
             _roundState = RoundState.Candidate;
         }
+        else if (_roundState == RoundState.Candidate && timeToCenterMs.HasValue)
+        {
+            var predicted = nowMs + timeToCenterMs.Value - _pressLatencyMsRuntime;
+            if (double.IsInfinity(_roundScheduleFireAtMs))
+            {
+                _roundScheduleFireAtMs = predicted;
+            }
+            else
+            {
+                _roundScheduleFireAtMs = (_roundScheduleFireAtMs * 0.45) + (predicted * 0.55);
+            }
+        }
 
+        if (_roundState == RoundState.Candidate &&
+            !double.IsInfinity(_roundScheduleFireAtMs) &&
+            (nowMs - _roundScheduleFireAtMs) > 170.0)
+        {
+            _roundScheduleFireAtMs = double.PositiveInfinity;
+        }
+
+        var scheduleLagMs = (!double.IsInfinity(_roundScheduleFireAtMs)) ? (nowMs - _roundScheduleFireAtMs) : double.NaN;
         var schedulerDue = _roundState == RoundState.Candidate &&
             !double.IsInfinity(_roundScheduleFireAtMs) &&
-            nowMs >= _roundScheduleFireAtMs;
+            scheduleLagMs >= -4.0 &&
+            scheduleLagMs <= 170.0;
 
         var fallbackDeadlineMs = _roundStartMs + (AppConstants.RoundTimeoutMs * _fallbackDeadlineRatioRuntime);
         var fallbackDue = _roundState is RoundState.Armed or RoundState.Candidate
             && !_roundFallbackFired
             && nowMs >= fallbackDeadlineMs;
+        var opportunisticEdgeDue = result.Overlap && edgeDiffDeg <= Math.Min(2.6, (triggerDiffLimit * 0.30) + 0.2);
 
         var cooldownOk = _pressArmed &&
             (now - _lastAttempt) >= AppConstants.AttemptIntervalSec &&
@@ -1949,6 +1989,7 @@ public sealed class MainForm : Form
             cooldownOk &&
             (
                 (schedulerDue && isTimingOk && isCenterOk) ||
+                (opportunisticEdgeDue && isTimingOk) ||
                 (fallbackDue && result.Overlap && effectiveDiffDeg <= fallbackDiffLimit)
             );
         var fallbackFireNow = canPress && fallbackDue;
@@ -1976,12 +2017,27 @@ public sealed class MainForm : Form
                     keyEvidenceOk ? null : "key-mismatch",
                     isTimingOk ? null : "bad-timing",
                     isCenterOk ? null : "off-center",
-                    schedulerDue || fallbackDue ? null : "wait-schedule",
+                    schedulerDue || fallbackDue || opportunisticEdgeDue ? null : "wait-schedule",
                 }.Where(x => x is not null));
 
-            AppendLog(
-                $"OCR dbg | mode={mode} round={_roundId}/{_roundState} rKey={_roundKey} rk={_rearmKey} maj={(majorityKey ?? "-")} rel={(reliableKey ?? "-")} overlap={(result.Overlap ? "Y" : "N")} sch={(schedulerDue ? "Y" : "N")} fb={(fallbackDue ? "Y" : "N")} arm={(_pressArmed ? "Y" : "N")} fresh={(isFreshOcrForPress ? "Y" : "N")} since={(sinceLastPressMs >= 0 ? sinceLastPressMs.ToString("0") : "-")}ms key={(key ?? "-").ToUpperInvariant()} score={score:0.000}/{_ocrMinScore:0.000} m={margin:0.000} thr={roundMarginThreshold:0.000}/{fireMarginThreshold:0.000} stable={_ocrSameKeyStreak}/{AppConstants.OcrRequireStableReads} diff={diffText}/{triggerDiffLimit:0.0} cDiff={centerDiffText}/{centerGateLimit:0.0} eff={effectiveDiffDeg:0.0} ttc={ttcText} lat={_pressLatencyMsRuntime:0}ms press={(canPress ? (fallbackFireNow ? "fallback" : "scheduled") : "-")} reject={(string.IsNullOrWhiteSpace(rejectReason) ? "-" : rejectReason)} | {dbg}");
-            _lastOcrDebugLogMs = nowMs;
+            var dbgReliable = reliableKey ?? "-";
+            var dbgStateChanged =
+                _lastDbgRoundId != _roundId ||
+                _lastDbgRoundState != _roundState ||
+                !_lastDbgReliableKey.Equals(dbgReliable, StringComparison.OrdinalIgnoreCase);
+            var dbgAction = canPress || schedulerDue || fallbackDue || opportunisticEdgeDue;
+            var dbgPeriodic = (nowMs - _lastOcrDebugLogMs) >= 800.0;
+            var dbgRejectChanged = !_lastDbgReject.Equals(rejectReason, StringComparison.Ordinal);
+            if (dbgStateChanged || dbgAction || dbgPeriodic || dbgRejectChanged)
+            {
+                AppendLog(
+                    $"OCR dbg | mode={mode} round={_roundId}/{_roundState} rKey={_roundKey} rk={_rearmKey} maj={(majorityKey ?? "-")} rel={dbgReliable} overlap={(result.Overlap ? "Y" : "N")} sch={(schedulerDue ? "Y" : "N")} op={(opportunisticEdgeDue ? "Y" : "N")} fb={(fallbackDue ? "Y" : "N")} arm={(_pressArmed ? "Y" : "N")} fresh={(isFreshOcrForPress ? "Y" : "N")} since={(sinceLastPressMs >= 0 ? sinceLastPressMs.ToString("0") : "-")}ms key={(key ?? "-").ToUpperInvariant()} score={score:0.000}/{_ocrMinScore:0.000} m={margin:0.000} thr={roundMarginThreshold:0.000}/{fireMarginThreshold:0.000} stable={_ocrSameKeyStreak}/{AppConstants.OcrRequireStableReads} diff={diffText}/{triggerDiffLimit:0.0} cDiff={centerDiffText}/{centerGateLimit:0.0} eff={effectiveDiffDeg:0.0} lag={(double.IsNaN(scheduleLagMs) ? "-" : scheduleLagMs.ToString("0"))} ttc={ttcText} lat={_pressLatencyMsRuntime:0}ms press={(canPress ? (fallbackFireNow ? "fallback" : "scheduled") : "-")} reject={(string.IsNullOrWhiteSpace(rejectReason) ? "-" : rejectReason)} | {dbg}");
+                _lastOcrDebugLogMs = nowMs;
+                _lastDbgRoundId = _roundId;
+                _lastDbgRoundState = _roundState;
+                _lastDbgReliableKey = dbgReliable;
+                _lastDbgReject = rejectReason;
+            }
         }
 
         if (canPress && !string.IsNullOrWhiteSpace(keyToPress))
