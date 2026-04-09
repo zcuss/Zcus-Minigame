@@ -25,6 +25,10 @@ public static class AppConstants
     public const int PressRearmClearFrames = 1;
     public const int PressTouchWindowMs = 160;
     public const double PressCenterMaxDiffDeg = 8.5;
+    public const double PressPredictionLeadMs = 70.0;
+    public const double PressPredictionMaxLeadDeg = 30.0;
+    public const double PressPredictionMinSpeedDegPerSec = 80.0;
+    public const double PressPredictionMaxSpeedDegPerSec = 900.0;
 
     public const int OcrBoxW = 40;
     public const int OcrBoxH = 40;

@@ -52,6 +52,9 @@ public sealed class MainForm : Form
     private string _lastOcrKeyStable = string.Empty;
     private int _ocrSameKeyStreak;
     private double? _prevFrameDiff;
+    private double? _prevTimingDiff;
+    private double? _prevRedAngleDeg;
+    private double _prevRedAngleMs;
     private nint? _targetHwnd;
     private Rectangle? _cachedRegion;
     private (int capX, int capY, int capW, int capH, int scanX, int scanY, int tolX10)? _lastCfgTuple;
@@ -726,6 +729,9 @@ public sealed class MainForm : Form
                 _lastValidOcr = new OcrResult(null, 0.0, "w:0.00 a:0.00", new CvRect(0, 0, 0, 0));
                 _lastValidOcrMs = 0;
                 _prevFrameDiff = null;
+                _prevTimingDiff = null;
+                _prevRedAngleDeg = null;
+                _prevRedAngleMs = 0;
                 _statusLabel.Text = "Status: Tracking...";
                 SetStartButtonStyle(true);
                 RefreshLicenseInfo();
@@ -750,6 +756,9 @@ public sealed class MainForm : Form
         _lastValidOcr = new OcrResult(null, 0.0, "w:0.00 a:0.00", new CvRect(0, 0, 0, 0));
         _lastValidOcrMs = 0;
         _prevFrameDiff = null;
+        _prevTimingDiff = null;
+        _prevRedAngleDeg = null;
+        _prevRedAngleMs = 0;
         _statusLabel.Text = "Status: Idle";
         SetStartButtonStyle(false);
         RefreshLicenseInfo();
@@ -1435,38 +1444,67 @@ public sealed class MainForm : Form
         }
         var keyStable = _ocrSameKeyStreak >= AppConstants.OcrRequireStableReads;
         var centerDiffDeg = 999.0;
+        var centerAngleDeg = 0.0;
         var hasCenterDiff = result.RedAngle.HasValue
-            && TryGetBlueArcCenterDiff(result.RedAngle.Value, result.BlueAngles, _cfg.BlueStepDeg, out centerDiffDeg);
+            && TryGetBlueArcCenterInfo(result.RedAngle.Value, result.BlueAngles, _cfg.BlueStepDeg, out centerDiffDeg, out centerAngleDeg);
+
+        var predictedCenterDiffDeg = (double?)null;
+        var redSpeedDegPerSec = (double?)null;
+        if (result.RedAngle.HasValue && hasCenterDiff && _prevRedAngleDeg.HasValue && _prevRedAngleMs > 0)
+        {
+            var dtMs = nowMs - _prevRedAngleMs;
+            if (dtMs > 0.9)
+            {
+                var delta = SignedDeltaDeg(_prevRedAngleDeg.Value, result.RedAngle.Value);
+                var speed = delta * (1000.0 / dtMs);
+                if (Math.Abs(speed) >= AppConstants.PressPredictionMinSpeedDegPerSec &&
+                    Math.Abs(speed) <= AppConstants.PressPredictionMaxSpeedDegPerSec)
+                {
+                    var leadDeg = Math.Clamp(
+                        speed * (AppConstants.PressPredictionLeadMs / 1000.0),
+                        -AppConstants.PressPredictionMaxLeadDeg,
+                        AppConstants.PressPredictionMaxLeadDeg);
+                    var predictedRed = NormalizeDeg(result.RedAngle.Value + leadDeg);
+                    predictedCenterDiffDeg = MinigameDetector.CircularDelta(predictedRed, centerAngleDeg);
+                    redSpeedDegPerSec = speed;
+                }
+            }
+        }
+
+        var effectiveDiffDeg = predictedCenterDiffDeg
+            ?? (hasCenterDiff ? centerDiffDeg : result.BestDiff)
+            ?? 999.0;
 
         var redAngleText = result.RedAngle.HasValue ? result.RedAngle.Value.ToString("0.0") : "-";
         var diffText = result.BestDiff.HasValue ? result.BestDiff.Value.ToString("0.0") : "-";
         var centerDiffText = hasCenterDiff ? centerDiffDeg.ToString("0.0") : "-";
+        var predDiffText = predictedCenterDiffDeg.HasValue ? predictedCenterDiffDeg.Value.ToString("0.0") : "-";
         _detailLabel.Text =
-            $"red={redAngleText} blue={result.BlueAngles.Count} diff={diffText} cDiff={centerDiffText} overlap={(result.Overlap ? "Y" : "N")} mode={mode} src={(usingFallbackOcr ? "hold" : "live")} key={key ?? "-"}({score:0.00}) m={margin:0.00} st={_ocrSameKeyStreak}/{AppConstants.OcrRequireStableReads} {dbg}";
+            $"red={redAngleText} blue={result.BlueAngles.Count} diff={diffText} cDiff={centerDiffText} pDiff={predDiffText} overlap={(result.Overlap ? "Y" : "N")} mode={mode} src={(usingFallbackOcr ? "hold" : "live")} key={key ?? "-"}({score:0.00}) m={margin:0.00} st={_ocrSameKeyStreak}/{AppConstants.OcrRequireStableReads} {dbg}";
 
         var strictDiffLimit = Math.Min(AppConstants.PressStrictMaxDiffDeg, _cfg.AngleToleranceDeg * AppConstants.PressStrictTolRatio);
         var triggerDiffLimit = Math.Min(AppConstants.PressTriggerDiffDeg, strictDiffLimit);
         var isKeyOk = IsAllowedAndMapped(key, allowedKeys);
-        var isTimingOk = result.BestDiff.HasValue && result.BestDiff.Value <= strictDiffLimit;
-        var isTriggerDiffOk = result.BestDiff.HasValue && result.BestDiff.Value <= triggerDiffLimit;
+        var isTimingOk = effectiveDiffDeg <= strictDiffLimit;
+        var isTriggerDiffOk = effectiveDiffDeg <= triggerDiffLimit;
         var fallbackCenterLimit = Math.Max(2.2, strictDiffLimit * 0.35);
         var isCenterOk = hasCenterDiff
-            ? centerDiffDeg <= AppConstants.PressCenterMaxDiffDeg
+            ? effectiveDiffDeg <= AppConstants.PressCenterMaxDiffDeg
             : (result.BestDiff.HasValue && result.BestDiff.Value <= fallbackCenterLimit);
-        var isApproachingCenter = !result.BestDiff.HasValue
-            || !_prevFrameDiff.HasValue
-            || result.BestDiff.Value <= (_prevFrameDiff.Value + 0.35);
-        var crossedTriggerBand = result.BestDiff.HasValue
-            && _prevFrameDiff.HasValue
-            && _prevFrameDiff.Value > triggerDiffLimit
-            && result.BestDiff.Value <= triggerDiffLimit;
-        var isStableFrame = result.Overlap && isTimingOk && isKeyOk && scoreOk && keyStable;
+        var isApproachingCenter = !_prevTimingDiff.HasValue || effectiveDiffDeg <= (_prevTimingDiff.Value + 0.35);
+        var crossedTriggerBand = _prevTimingDiff.HasValue
+            && _prevTimingDiff.Value > triggerDiffLimit
+            && effectiveDiffDeg <= triggerDiffLimit;
+        var hasPredictiveTrigger = predictedCenterDiffDeg.HasValue && predictedCenterDiffDeg.Value <= triggerDiffLimit && isApproachingCenter;
+        var hasStableLock = (result.Overlap && isTimingOk) || hasPredictiveTrigger;
+        var isStableFrame = hasStableLock && isKeyOk && scoreOk && keyStable;
         var justTouched = result.Overlap && !_wasOverlapping;
         if (justTouched)
         {
             _touchWindowUntilMs = nowMs + AppConstants.PressTouchWindowMs;
         }
         var isInTouchWindow = result.Overlap && nowMs <= _touchWindowUntilMs;
+        var hasTriggerSignal = crossedTriggerBand || (result.Overlap && isTimingOk && isInTouchWindow) || hasPredictiveTrigger;
 
         if (isStableFrame)
         {
@@ -1485,13 +1523,14 @@ public sealed class MainForm : Form
             {
                 _touchWindowUntilMs = 0;
                 _prevFrameDiff = null;
+                _prevTimingDiff = null;
             }
         }
         var keyToPress = AppConstants.AutoPressUseOcrKey && isKeyOk ? key?.Trim().ToUpperInvariant() : null;
 
         var canPress =
             AppConstants.AutoPressOnOverlap &&
-            (crossedTriggerBand || (result.Overlap && isTimingOk && isInTouchWindow)) &&
+            hasTriggerSignal &&
             isTriggerDiffOk &&
             isKeyOk &&
             scoreOk &&
@@ -1519,11 +1558,11 @@ public sealed class MainForm : Form
                     isTriggerDiffOk ? null : "bad-trigger-diff",
                     isCenterOk ? null : "off-center",
                     isApproachingCenter ? null : "away-center",
-                    (crossedTriggerBand || isInTouchWindow) ? null : "no-trigger",
+                    hasTriggerSignal ? null : "no-trigger",
                 }.Where(x => x is not null));
 
             AppendLog(
-                $"OCR dbg | mode={mode} src={(usingFallbackOcr ? "hold" : "live")} overlap={(result.Overlap ? "Y" : "N")} touch={(isInTouchWindow ? "Y" : "N")} cross={(crossedTriggerBand ? "Y" : "N")} key={(key ?? "-").ToUpperInvariant()} score={score:0.000}/{_ocrMinScore:0.000} m={margin:0.000}/{_ocrMinMargin:0.000} stable={_ocrSameKeyStreak}/{AppConstants.OcrRequireStableReads} amb={(ocr.IsAmbiguous ? "Y" : "N")} diff={diffText}/{triggerDiffLimit:0.0} cDiff={centerDiffText}/{AppConstants.PressCenterMaxDiffDeg:0.0} reject={(string.IsNullOrWhiteSpace(rejectReason) ? "-" : rejectReason)} | {dbg}");
+                $"OCR dbg | mode={mode} src={(usingFallbackOcr ? "hold" : "live")} overlap={(result.Overlap ? "Y" : "N")} touch={(isInTouchWindow ? "Y" : "N")} cross={(crossedTriggerBand ? "Y" : "N")} pred={(hasPredictiveTrigger ? "Y" : "N")} key={(key ?? "-").ToUpperInvariant()} score={score:0.000}/{_ocrMinScore:0.000} m={margin:0.000}/{_ocrMinMargin:0.000} stable={_ocrSameKeyStreak}/{AppConstants.OcrRequireStableReads} amb={(ocr.IsAmbiguous ? "Y" : "N")} diff={diffText}/{triggerDiffLimit:0.0} cDiff={centerDiffText}/{AppConstants.PressCenterMaxDiffDeg:0.0} pDiff={predDiffText} speed={(redSpeedDegPerSec.HasValue ? redSpeedDegPerSec.Value.ToString("0.0") : "-")} eff={effectiveDiffDeg:0.0} reject={(string.IsNullOrWhiteSpace(rejectReason) ? "-" : rejectReason)} | {dbg}");
             _lastOcrDebugLogMs = nowMs;
         }
 
@@ -1550,6 +1589,12 @@ public sealed class MainForm : Form
         if (result.BestDiff.HasValue)
         {
             _prevFrameDiff = result.BestDiff.Value;
+        }
+        _prevTimingDiff = effectiveDiffDeg < 998.0 ? effectiveDiffDeg : null;
+        if (result.RedAngle.HasValue)
+        {
+            _prevRedAngleDeg = result.RedAngle.Value;
+            _prevRedAngleMs = nowMs;
         }
         _wasOverlapping = result.Overlap;
 
@@ -1603,9 +1648,10 @@ public sealed class MainForm : Form
         return IsAllowedKey(key, allowed) && key is not null && AppConstants.VkMap.ContainsKey(key);
     }
 
-    private static bool TryGetBlueArcCenterDiff(double redAngleDeg, IReadOnlyList<double> blueAngles, double stepDeg, out double centerDiffDeg)
+    private static bool TryGetBlueArcCenterInfo(double redAngleDeg, IReadOnlyList<double> blueAngles, double stepDeg, out double centerDiffDeg, out double centerAngleDeg)
     {
         centerDiffDeg = 999.0;
+        centerAngleDeg = 0.0;
         if (blueAngles.Count == 0)
         {
             return false;
@@ -1672,8 +1718,24 @@ public sealed class MainForm : Form
         var maxA = unwrapped.Max();
         var center = NormalizeDeg((minA + maxA) / 2.0);
 
+        centerAngleDeg = center;
         centerDiffDeg = MinigameDetector.CircularDelta(red, center);
         return true;
+    }
+
+    private static double SignedDeltaDeg(double fromDeg, double toDeg)
+    {
+        var d = NormalizeDeg(toDeg) - NormalizeDeg(fromDeg);
+        if (d > 180.0)
+        {
+            d -= 360.0;
+        }
+        else if (d < -180.0)
+        {
+            d += 360.0;
+        }
+
+        return d;
     }
 
     private static double NormalizeDeg(double deg)
