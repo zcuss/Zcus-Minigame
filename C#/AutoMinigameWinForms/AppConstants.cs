@@ -6,6 +6,7 @@ public static class AppConstants
 {
     public static readonly bool DebugBypassLicense = true;
     public static readonly bool DebugAutoStart = true;
+    public const string TuningProfileLiveTimeoutPriority = "LiveTimeoutPriority";
 
     public const string WindowTitle = "FiveM";
     public const int UpdateMs = 1;
@@ -32,6 +33,17 @@ public static class AppConstants
     public const double PressPredictionMaxLeadDeg = 20.0;
     public const double PressPredictionMinSpeedDegPerSec = 60.0;
     public const double PressPredictionMaxSpeedDegPerSec = 900.0;
+    public const int RoundTimeoutMs = 1700;
+
+    public const int LiveProfileCaptureMinSize = 160;
+    public const int LiveProfileOcrBoxMinSize = 36;
+    public const int LiveProfileOcrMinScoreX100 = 8;
+    public const int LiveProfileOcrMinMarginX100 = 5;
+    public const int LiveProfilePressLatencyMs = 62;
+    public const bool LiveProfilePressLatencyAutoTune = true;
+    public const double LiveProfileFallbackDeadlineRatio = 0.78;
+    public const int LiveProfileOcrMajorityWindow = 3;
+    public const int LiveProfileOcrFireMinMarginX100 = 8;
 
     public const int OcrBoxW = 40;
     public const int OcrBoxH = 40;

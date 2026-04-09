@@ -26,6 +26,12 @@ public sealed class AppConfig
     public bool DebugAllLogs { get; set; } = true;
     public string StartHotkey { get; set; } = AppConstants.DefaultStartHotkey;
     public string StartHotkeyModifier { get; set; } = AppConstants.DefaultStartHotkeyModifier;
+    public string TuningProfile { get; set; } = AppConstants.TuningProfileLiveTimeoutPriority;
+    public int PressLatencyMs { get; set; } = AppConstants.LiveProfilePressLatencyMs;
+    public bool PressLatencyAutoTune { get; set; } = AppConstants.LiveProfilePressLatencyAutoTune;
+    public double FallbackDeadlineRatio { get; set; } = AppConstants.LiveProfileFallbackDeadlineRatio;
+    public int OcrMajorityWindow { get; set; } = AppConstants.LiveProfileOcrMajorityWindow;
+    public int OcrFireMinMarginX100 { get; set; } = AppConstants.LiveProfileOcrFireMinMarginX100;
 
     public string LicenseKey { get; set; } = string.Empty;
     public string Software { get; set; } = AppConstants.SoftwareName;

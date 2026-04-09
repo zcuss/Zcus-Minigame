@@ -26,6 +26,15 @@ public sealed class MainForm : Form
         "F1", "F2", "F3", "F4", "F5", "F6", "F7", "F8", "F9", "F10", "F11", "F12"
     ];
 
+    private enum RoundState
+    {
+        Idle,
+        Armed,
+        Candidate,
+        Fired,
+        RearmWait,
+    }
+
     private readonly string _configPath;
     private readonly AppConfig _runtimeConfig;
     private readonly LicenseService _licenseService;
@@ -65,6 +74,29 @@ public sealed class MainForm : Form
     private bool _usingFallbackRegion;
     private double _lastLicenseRevalidateAtSec;
     private double _lastOcrDebugLogMs;
+    private RoundState _roundState = RoundState.Idle;
+    private int _roundId;
+    private string _roundKey = string.Empty;
+    private double _roundStartMs;
+    private bool _roundFired;
+    private bool _roundFallbackFired;
+    private double _roundScheduleFireAtMs = double.PositiveInfinity;
+    private double _roundBestEffDiff = 999.0;
+    private readonly Queue<string> _ocrMajorityQueue = new();
+
+    private int _sessionRoundCount;
+    private int _sessionFireCount;
+    private int _sessionTimeoutCount;
+    private int _sessionFallbackFireCount;
+    private int _sessionNoClickStreak;
+    private int _sessionMaxNoClickStreak;
+    private readonly List<double> _sessionFireDiffs = [];
+
+    private double _pressLatencyMsRuntime = AppConstants.LiveProfilePressLatencyMs;
+    private bool _pressLatencyAutoTuneRuntime = AppConstants.LiveProfilePressLatencyAutoTune;
+    private double _fallbackDeadlineRatioRuntime = AppConstants.LiveProfileFallbackDeadlineRatio;
+    private int _ocrMajorityWindowRuntime = AppConstants.LiveProfileOcrMajorityWindow;
+    private double _ocrFireMinMarginRuntime = AppConstants.LiveProfileOcrFireMinMarginX100 / 100.0;
 
     private int _hit;
     private Keys _startHotkey = Keys.F6;
@@ -746,10 +778,13 @@ public sealed class MainForm : Form
                 _prevRedAngleMs = 0;
                 _lastPressedKey = string.Empty;
                 _lastPressMs = 0;
+                ResetPressEngineState();
+                ResetSessionMetrics();
                 _statusLabel.Text = "Status: Tracking...";
                 SetStartButtonStyle(true);
                 RefreshLicenseInfo();
                 AppendLog(AppConstants.DebugBypassLicense ? "Bot: Started (DEBUG no-license)" : "Bot: Started");
+                RefreshSummary();
                 return;
             }
             finally
@@ -775,22 +810,203 @@ public sealed class MainForm : Form
         _prevRedAngleMs = 0;
         _lastPressedKey = string.Empty;
         _lastPressMs = 0;
+        if (_roundState != RoundState.Idle)
+        {
+            CloseRoundAsTimeout();
+        }
         _statusLabel.Text = "Status: Idle";
         SetStartButtonStyle(false);
         RefreshLicenseInfo();
+        var timeoutRate = _sessionRoundCount > 0
+            ? (_sessionTimeoutCount * 100.0) / _sessionRoundCount
+            : 0.0;
+        var avg = _sessionFireDiffs.Count > 0 ? _sessionFireDiffs.Average() : 0.0;
+        var p95 = Percentile(_sessionFireDiffs, 95.0);
+        AppendLog($"Session | rounds={_sessionRoundCount} fires={_sessionFireCount} timeout={_sessionTimeoutCount} timeoutRate={timeoutRate:0.0}% fallback={_sessionFallbackFireCount} noClickMax={_sessionMaxNoClickStreak} diff(avg/p95)={avg:0.0}/{p95:0.0} latency={_pressLatencyMsRuntime:0}ms");
         AppendLog("Bot: Stopped");
+        RefreshSummary();
     }
 
     private void ClearLog()
     {
         _hit = 0;
         _logBox.Clear();
+        ResetSessionMetrics();
+        ResetPressEngineState();
         RefreshSummary();
     }
 
     private void RefreshSummary()
     {
-        _summaryLabel.Text = $"Total Press={_hit}";
+        var timeoutRate = _sessionRoundCount > 0
+            ? (_sessionTimeoutCount * 100.0) / _sessionRoundCount
+            : 0.0;
+        var avg = _sessionFireDiffs.Count > 0 ? _sessionFireDiffs.Average() : 0.0;
+        var p95 = Percentile(_sessionFireDiffs, 95.0);
+        _summaryLabel.Text =
+            $"Press={_hit} rounds={_sessionRoundCount} timeout={_sessionTimeoutCount}({timeoutRate:0.0}%) " +
+            $"fallback={_sessionFallbackFireCount} noClickMax={_sessionMaxNoClickStreak} diff(avg/p95)={avg:0.0}/{p95:0.0}";
+    }
+
+    private void ResetPressEngineState()
+    {
+        _roundState = RoundState.Idle;
+        _roundId = 0;
+        _roundKey = string.Empty;
+        _roundStartMs = 0;
+        _roundFired = false;
+        _roundFallbackFired = false;
+        _roundScheduleFireAtMs = double.PositiveInfinity;
+        _roundBestEffDiff = 999.0;
+        _ocrMajorityQueue.Clear();
+    }
+
+    private void ResetSessionMetrics()
+    {
+        _sessionRoundCount = 0;
+        _sessionFireCount = 0;
+        _sessionTimeoutCount = 0;
+        _sessionFallbackFireCount = 0;
+        _sessionNoClickStreak = 0;
+        _sessionMaxNoClickStreak = 0;
+        _sessionFireDiffs.Clear();
+    }
+
+    private void BeginRound(string key, double nowMs)
+    {
+        if (string.IsNullOrWhiteSpace(key))
+        {
+            return;
+        }
+
+        _roundId++;
+        _roundKey = key.Trim().ToUpperInvariant();
+        _roundStartMs = nowMs;
+        _roundFired = false;
+        _roundFallbackFired = false;
+        _roundScheduleFireAtMs = double.PositiveInfinity;
+        _roundBestEffDiff = 999.0;
+        _roundState = RoundState.Armed;
+        _pressArmed = true;
+        _sessionRoundCount++;
+    }
+
+    private void CloseRoundAsTimeout()
+    {
+        if (_roundState == RoundState.Idle)
+        {
+            return;
+        }
+
+        if (!_roundFired)
+        {
+            _sessionTimeoutCount++;
+            _sessionNoClickStreak++;
+            _sessionMaxNoClickStreak = Math.Max(_sessionMaxNoClickStreak, _sessionNoClickStreak);
+        }
+        else
+        {
+            _sessionNoClickStreak = 0;
+        }
+
+        _roundState = RoundState.Idle;
+        _roundKey = string.Empty;
+        _roundScheduleFireAtMs = double.PositiveInfinity;
+        _roundBestEffDiff = 999.0;
+    }
+
+    private void CloseRoundAsFired(double effectiveDiffDeg, bool fallbackFired)
+    {
+        _roundFired = true;
+        _sessionFireCount++;
+        _sessionNoClickStreak = 0;
+        if (fallbackFired)
+        {
+            _sessionFallbackFireCount++;
+        }
+
+        if (effectiveDiffDeg < 998.0)
+        {
+            _sessionFireDiffs.Add(effectiveDiffDeg);
+            if (_sessionFireDiffs.Count > 400)
+            {
+                _sessionFireDiffs.RemoveAt(0);
+            }
+        }
+
+        if (_pressLatencyAutoTuneRuntime && !fallbackFired && _sessionFireCount % 4 == 0)
+        {
+            if (effectiveDiffDeg > 11.0)
+            {
+                _pressLatencyMsRuntime = Math.Max(20.0, _pressLatencyMsRuntime - 2.0);
+            }
+            else if (effectiveDiffDeg < 2.6)
+            {
+                _pressLatencyMsRuntime = Math.Min(180.0, _pressLatencyMsRuntime + 1.0);
+            }
+        }
+
+        _roundState = RoundState.RearmWait;
+        _roundScheduleFireAtMs = double.PositiveInfinity;
+    }
+
+    private void PushOcrMajorityKey(string? key, bool accepted)
+    {
+        if (!accepted || string.IsNullOrWhiteSpace(key))
+        {
+            return;
+        }
+
+        _ocrMajorityQueue.Enqueue(key.Trim().ToUpperInvariant());
+        while (_ocrMajorityQueue.Count > _ocrMajorityWindowRuntime)
+        {
+            _ocrMajorityQueue.Dequeue();
+        }
+    }
+
+    private string? ResolveMajorityKey()
+    {
+        if (_ocrMajorityQueue.Count == 0)
+        {
+            return null;
+        }
+
+        var grouped = _ocrMajorityQueue
+            .GroupBy(x => x, StringComparer.OrdinalIgnoreCase)
+            .Select(g => (key: g.Key.ToUpperInvariant(), count: g.Count()))
+            .OrderByDescending(x => x.count)
+            .ThenBy(x => x.key, StringComparer.Ordinal)
+            .ToList();
+
+        if (grouped.Count == 0)
+        {
+            return null;
+        }
+
+        var best = grouped[0];
+        var needed = Math.Max(1, (_ocrMajorityQueue.Count / 2) + 1);
+        return best.count >= needed ? best.key : null;
+    }
+
+    private static double Percentile(IReadOnlyList<double> source, double percentile)
+    {
+        if (source.Count == 0)
+        {
+            return 0.0;
+        }
+
+        var ordered = source.OrderBy(x => x).ToArray();
+        var p = Math.Clamp(percentile, 0.0, 100.0) / 100.0;
+        var pos = p * (ordered.Length - 1);
+        var lo = (int)Math.Floor(pos);
+        var hi = (int)Math.Ceiling(pos);
+        if (lo == hi)
+        {
+            return ordered[lo];
+        }
+
+        var t = pos - lo;
+        return ordered[lo] + ((ordered[hi] - ordered[lo]) * t);
     }
 
     private void RefreshLicenseInfo()
@@ -1134,6 +1350,10 @@ public sealed class MainForm : Form
 
     private AppConfig BuildConfigFromUi()
     {
+        var profile = string.IsNullOrWhiteSpace(_runtimeConfig.TuningProfile)
+            ? AppConstants.TuningProfileLiveTimeoutPriority
+            : _runtimeConfig.TuningProfile;
+
         return new AppConfig
         {
             WindowTitle = NormalizeWindowTitle(_tbWindowTitle.Text),
@@ -1160,11 +1380,18 @@ public sealed class MainForm : Form
             DebugAllLogs = _debugAllLogs,
             StartHotkeyModifier = (_cbHotkeyModifier.SelectedItem?.ToString() ?? AppConstants.DefaultStartHotkeyModifier).Trim(),
             StartHotkey = (_cbStartHotkey.SelectedItem?.ToString() ?? AppConstants.DefaultStartHotkey).Trim(),
+            TuningProfile = profile,
+            PressLatencyMs = (int)Math.Round(Math.Clamp(_pressLatencyMsRuntime, 20.0, 180.0)),
+            PressLatencyAutoTune = _pressLatencyAutoTuneRuntime,
+            FallbackDeadlineRatio = Math.Clamp(_fallbackDeadlineRatioRuntime, 0.45, 0.95),
+            OcrMajorityWindow = Math.Clamp(_ocrMajorityWindowRuntime, 1, 7),
+            OcrFireMinMarginX100 = (int)Math.Round(Math.Clamp(_ocrFireMinMarginRuntime, 0.0, 0.80) * 100.0),
         };
     }
 
     private void ApplyConfig(AppConfig cfg)
     {
+        ApplyLiveProfileDefaults(cfg);
         SetSpin(_spCapX, cfg.CaptureOffsetX);
         SetSpin(_spCapY, cfg.CaptureOffsetY);
         SetSpin(_spCapW, cfg.CaptureWidth > 0 ? cfg.CaptureWidth : _cfg.CaptureSize);
@@ -1214,7 +1441,56 @@ public sealed class MainForm : Form
         _cbStartHotkey.SelectedItem = hotkeyText;
         ApplyStartHotkey(hotkeyModifier, hotkeyText);
         _tbHotkey.Text = BuildHotkeyDisplay(NormalizeHotkeyModifier(hotkeyModifier), NormalizeHotkey(hotkeyText));
+
+        _pressLatencyMsRuntime = Math.Clamp(cfg.PressLatencyMs, 20.0, 180.0);
+        _pressLatencyAutoTuneRuntime = cfg.PressLatencyAutoTune;
+        _fallbackDeadlineRatioRuntime = Math.Clamp(cfg.FallbackDeadlineRatio, 0.45, 0.95);
+        _ocrMajorityWindowRuntime = Math.Clamp(cfg.OcrMajorityWindow, 1, 7);
+        _ocrFireMinMarginRuntime = Math.Clamp(cfg.OcrFireMinMarginX100 / 100.0, 0.0, 0.80);
+
+        _runtimeConfig.TuningProfile = cfg.TuningProfile;
+        _runtimeConfig.PressLatencyMs = (int)Math.Round(_pressLatencyMsRuntime);
+        _runtimeConfig.PressLatencyAutoTune = _pressLatencyAutoTuneRuntime;
+        _runtimeConfig.FallbackDeadlineRatio = _fallbackDeadlineRatioRuntime;
+        _runtimeConfig.OcrMajorityWindow = _ocrMajorityWindowRuntime;
+        _runtimeConfig.OcrFireMinMarginX100 = (int)Math.Round(_ocrFireMinMarginRuntime * 100.0);
         RefreshLicenseInfo();
+    }
+
+    private static void ApplyLiveProfileDefaults(AppConfig cfg)
+    {
+        if (cfg is null)
+        {
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(cfg.TuningProfile))
+        {
+            cfg.TuningProfile = AppConstants.TuningProfileLiveTimeoutPriority;
+        }
+
+        if (!cfg.TuningProfile.Equals(AppConstants.TuningProfileLiveTimeoutPriority, StringComparison.OrdinalIgnoreCase))
+        {
+            cfg.PressLatencyMs = cfg.PressLatencyMs <= 0 ? AppConstants.LiveProfilePressLatencyMs : cfg.PressLatencyMs;
+            cfg.FallbackDeadlineRatio = cfg.FallbackDeadlineRatio <= 0 ? AppConstants.LiveProfileFallbackDeadlineRatio : cfg.FallbackDeadlineRatio;
+            cfg.OcrMajorityWindow = cfg.OcrMajorityWindow <= 0 ? AppConstants.LiveProfileOcrMajorityWindow : cfg.OcrMajorityWindow;
+            cfg.OcrFireMinMarginX100 = cfg.OcrFireMinMarginX100 <= 0 ? AppConstants.LiveProfileOcrFireMinMarginX100 : cfg.OcrFireMinMarginX100;
+            return;
+        }
+
+        cfg.DebugAllLogs = true;
+        cfg.CaptureWidth = Math.Max(cfg.CaptureWidth, AppConstants.LiveProfileCaptureMinSize);
+        cfg.CaptureHeight = Math.Max(cfg.CaptureHeight, AppConstants.LiveProfileCaptureMinSize);
+        cfg.OcrBoxW = Math.Max(cfg.OcrBoxW, AppConstants.LiveProfileOcrBoxMinSize);
+        cfg.OcrBoxH = Math.Max(cfg.OcrBoxH, AppConstants.LiveProfileOcrBoxMinSize);
+        cfg.OcrMinScoreX100 = Math.Max(cfg.OcrMinScoreX100, AppConstants.LiveProfileOcrMinScoreX100);
+        cfg.OcrMinMarginX100 = Math.Max(cfg.OcrMinMarginX100, AppConstants.LiveProfileOcrMinMarginX100);
+
+        cfg.PressLatencyMs = cfg.PressLatencyMs <= 0 ? AppConstants.LiveProfilePressLatencyMs : cfg.PressLatencyMs;
+        cfg.PressLatencyAutoTune = cfg.PressLatencyAutoTune || AppConstants.LiveProfilePressLatencyAutoTune;
+        cfg.FallbackDeadlineRatio = cfg.FallbackDeadlineRatio <= 0 ? AppConstants.LiveProfileFallbackDeadlineRatio : cfg.FallbackDeadlineRatio;
+        cfg.OcrMajorityWindow = cfg.OcrMajorityWindow <= 0 ? AppConstants.LiveProfileOcrMajorityWindow : cfg.OcrMajorityWindow;
+        cfg.OcrFireMinMarginX100 = cfg.OcrFireMinMarginX100 <= 0 ? AppConstants.LiveProfileOcrFireMinMarginX100 : cfg.OcrFireMinMarginX100;
     }
 
     private static void SetSpin(NumericUpDown spin, int value)
