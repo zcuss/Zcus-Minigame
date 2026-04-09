@@ -189,8 +189,6 @@ const hitWindow = 0.25;
 const START_ANGLE = -Math.PI / 2;
 const FULL_TURN = Math.PI * 2;
 const TIMEOUT_PRESS = "TIMEOUT";
-const TOP_BLOCK_DEG = 25;
-const TOP_BLOCK_RAD = TOP_BLOCK_DEG * Math.PI / 180;
 const MIN_BLUE_CM = 1;
 const MAX_BLUE_CM = 1.5;
 const PX_PER_CM = 37.7952755906;
@@ -278,17 +276,40 @@ function randomBlueSize(){
     return minRad + Math.random() * Math.max(0.0001, maxRad - minRad);
 }
 
+function normalizeDeg(v){
+    let d = v % 360;
+    if(d < 0) d += 360;
+    return d;
+}
+
+function isForbiddenDeg(d){
+    const startDeg = normalizeDeg(radToDeg(START_ANGLE));
+    const n = normalizeDeg(d - startDeg);
+    return (n >= 0 && n <= 70) || (n >= 290 && n <= 360);
+}
+
+function isArcAllowed(startRad, arcSizeRad){
+    const startDeg = normalizeDeg(radToDeg(startRad));
+    const arcDeg = Math.max(0, radToDeg(arcSizeRad));
+    const steps = Math.max(1, Math.ceil(arcDeg));
+    for(let i = 0; i <= steps; i++){
+        const d = normalizeDeg(startDeg + (arcDeg * (i / steps)));
+        if(isForbiddenDeg(d)){
+            return false;
+        }
+    }
+    return true;
+}
+
 function randomZoneAvoidTop(arcSize){
     const safeArc = Math.max(0, arcSize);
-    for(let i = 0; i < 80; i++){
+    for(let i = 0; i < 320; i++){
         const candidate = randomZone();
-        const center = candidate + safeArc / 2;
-        const minSafe = TOP_BLOCK_RAD + safeArc / 2;
-        if(angleDiff(center, START_ANGLE) >= minSafe){
+        if(isArcAllowed(candidate, safeArc)){
             return candidate;
         }
     }
-    return randomZone();
+    return 70 * Math.PI / 180;
 }
 
 function angleDiff(a, b){
