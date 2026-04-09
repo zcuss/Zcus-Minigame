@@ -43,7 +43,7 @@ public static class AppConstants
     public const bool LiveProfilePressLatencyAutoTune = true;
     public const double LiveProfileFallbackDeadlineRatio = 0.78;
     public const int LiveProfileOcrMajorityWindow = 3;
-    public const int LiveProfileOcrFireMinMarginX100 = 8;
+    public const int LiveProfileOcrFireMinMarginX100 = 3;
 
     public const int OcrBoxW = 40;
     public const int OcrBoxH = 40;

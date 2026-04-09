@@ -79,6 +79,8 @@ public sealed class MainForm : Form
     private bool _roundFallbackFired;
     private double _roundScheduleFireAtMs = double.PositiveInfinity;
     private double _roundBestEffDiff = 999.0;
+    private string _rearmKey = string.Empty;
+    private double _rearmStartMs;
     private readonly Queue<string> _ocrMajorityQueue = new();
 
     private int _sessionRoundCount;
@@ -803,7 +805,7 @@ public sealed class MainForm : Form
         _lastPressMs = 0;
         if (_roundState != RoundState.Idle)
         {
-            CloseRoundAsTimeout();
+            CloseRoundAsTimeout(_clock.Elapsed.TotalMilliseconds, waitForReset: false);
         }
         _statusLabel.Text = "Status: Idle";
         SetStartButtonStyle(false);
@@ -849,6 +851,8 @@ public sealed class MainForm : Form
         _roundFallbackFired = false;
         _roundScheduleFireAtMs = double.PositiveInfinity;
         _roundBestEffDiff = 999.0;
+        _rearmKey = string.Empty;
+        _rearmStartMs = 0.0;
         _ocrMajorityQueue.Clear();
     }
 
@@ -877,17 +881,64 @@ public sealed class MainForm : Form
         _roundFallbackFired = false;
         _roundScheduleFireAtMs = double.PositiveInfinity;
         _roundBestEffDiff = 999.0;
+        _rearmKey = string.Empty;
+        _rearmStartMs = 0.0;
         _roundState = RoundState.Armed;
         _pressArmed = true;
         _sessionRoundCount++;
     }
 
-    private void CloseRoundAsTimeout()
+    private void EnterRearmWait(double nowMs, string key)
+    {
+        _roundState = RoundState.RearmWait;
+        _roundScheduleFireAtMs = double.PositiveInfinity;
+        _roundBestEffDiff = 999.0;
+        _rearmStartMs = nowMs;
+        _rearmKey = string.IsNullOrWhiteSpace(key) ? string.Empty : key.Trim().ToUpperInvariant();
+        _roundKey = string.Empty;
+        _ocrMajorityQueue.Clear();
+    }
+
+    private bool TryReleaseRearmToIdle(double nowMs, bool overlap, string? reliableKey)
+    {
+        if (_roundState != RoundState.RearmWait)
+        {
+            return false;
+        }
+
+        var holdElapsed = (nowMs - _rearmStartMs) >= AppConstants.PressTouchWindowMs;
+        if (!holdElapsed)
+        {
+            return false;
+        }
+
+        var keyChanged = !string.IsNullOrWhiteSpace(reliableKey) &&
+            !_rearmKey.Equals(reliableKey, StringComparison.OrdinalIgnoreCase);
+        if (overlap && !keyChanged)
+        {
+            return false;
+        }
+
+        _roundState = RoundState.Idle;
+        _roundKey = string.Empty;
+        _roundFired = false;
+        _roundFallbackFired = false;
+        _roundScheduleFireAtMs = double.PositiveInfinity;
+        _roundBestEffDiff = 999.0;
+        _rearmKey = string.Empty;
+        _rearmStartMs = 0.0;
+        _pressArmed = true;
+        return true;
+    }
+
+    private void CloseRoundAsTimeout(double nowMs, bool waitForReset)
     {
         if (_roundState == RoundState.Idle)
         {
             return;
         }
+
+        var closingKey = _roundKey;
 
         if (!_roundFired)
         {
@@ -900,14 +951,24 @@ public sealed class MainForm : Form
             _sessionNoClickStreak = 0;
         }
 
-        _roundState = RoundState.Idle;
-        _roundKey = string.Empty;
-        _roundScheduleFireAtMs = double.PositiveInfinity;
-        _roundBestEffDiff = 999.0;
+        if (waitForReset)
+        {
+            EnterRearmWait(nowMs, closingKey);
+        }
+        else
+        {
+            _roundState = RoundState.Idle;
+            _roundKey = string.Empty;
+            _roundScheduleFireAtMs = double.PositiveInfinity;
+            _roundBestEffDiff = 999.0;
+            _rearmKey = string.Empty;
+            _rearmStartMs = 0.0;
+        }
     }
 
-    private void CloseRoundAsFired(double effectiveDiffDeg, bool fallbackFired)
+    private void CloseRoundAsFired(double effectiveDiffDeg, bool fallbackFired, double nowMs)
     {
+        var closingKey = _roundKey;
         _roundFired = true;
         _sessionFireCount++;
         _sessionNoClickStreak = 0;
@@ -937,8 +998,7 @@ public sealed class MainForm : Form
             }
         }
 
-        _roundState = RoundState.RearmWait;
-        _roundScheduleFireAtMs = double.PositiveInfinity;
+        EnterRearmWait(nowMs, closingKey);
     }
 
     private void PushOcrMajorityKey(string? key, bool accepted)
@@ -1438,6 +1498,11 @@ public sealed class MainForm : Form
         _fallbackDeadlineRatioRuntime = Math.Clamp(cfg.FallbackDeadlineRatio, 0.45, 0.95);
         _ocrMajorityWindowRuntime = Math.Clamp(cfg.OcrMajorityWindow, 1, 7);
         _ocrFireMinMarginRuntime = Math.Clamp(cfg.OcrFireMinMarginX100 / 100.0, 0.0, 0.80);
+        if (cfg.TuningProfile.Equals(AppConstants.TuningProfileLiveTimeoutPriority, StringComparison.OrdinalIgnoreCase))
+        {
+            _ocrMajorityWindowRuntime = Math.Clamp(_ocrMajorityWindowRuntime, 3, 5);
+            _ocrFireMinMarginRuntime = Math.Min(_ocrFireMinMarginRuntime, 0.040);
+        }
 
         _runtimeConfig.TuningProfile = cfg.TuningProfile;
         _runtimeConfig.PressLatencyMs = (int)Math.Round(_pressLatencyMsRuntime);
@@ -1743,7 +1808,10 @@ public sealed class MainForm : Form
 
         var scoreOk = score >= _ocrMinScore;
         var marginOk = margin >= _ocrMinMargin;
-        var fireMarginOk = margin >= Math.Max(_ocrMinMargin, _ocrFireMinMarginRuntime);
+        var fireMarginThreshold = Math.Min(0.040, Math.Max(_ocrMinMargin, _ocrFireMinMarginRuntime));
+        var roundMarginThreshold = Math.Min(0.030, fireMarginThreshold);
+        var roundMarginOk = margin >= roundMarginThreshold;
+        var fireMarginOk = margin >= fireMarginThreshold;
 
         var normalizedKey = (key ?? string.Empty).Trim().ToUpperInvariant();
         if (!string.IsNullOrWhiteSpace(normalizedKey) && normalizedKey == _lastOcrKeyStable)
@@ -1759,12 +1827,13 @@ public sealed class MainForm : Form
         var keyStable = _ocrSameKeyStreak >= AppConstants.OcrRequireStableReads;
         var isKeyOk = IsAllowedAndMapped(key, allowedKeys);
         var isFreshOcrForPress = (nowMs - _lastOcrMs) <= (AppConstants.OcrIntervalMs * 8.0);
+        var ocrRoundAccepted = isKeyOk && scoreOk && roundMarginOk && keyStable && !ocr.IsAmbiguous;
         var ocrFireAccepted = isKeyOk && scoreOk && fireMarginOk && keyStable && !ocr.IsAmbiguous;
-        PushOcrMajorityKey(normalizedKey, ocrFireAccepted);
+        PushOcrMajorityKey(normalizedKey, ocrRoundAccepted);
         var majorityKey = ResolveMajorityKey();
         var reliableKey = !string.IsNullOrWhiteSpace(majorityKey)
             ? majorityKey
-            : (ocrFireAccepted ? normalizedKey : null);
+            : (ocrRoundAccepted ? normalizedKey : null);
 
         var centerDiffDeg = 999.0;
         var centerAngleDeg = 0.0;
@@ -1785,13 +1854,7 @@ public sealed class MainForm : Form
         var effectiveDiffDeg = hasCenterDiff ? centerDiffDeg : (result.BestDiff ?? 999.0);
         _roundBestEffDiff = Math.Min(_roundBestEffDiff, effectiveDiffDeg);
 
-        if (_roundState == RoundState.RearmWait && !result.Overlap)
-        {
-            _roundState = RoundState.Idle;
-            _roundKey = string.Empty;
-            _roundScheduleFireAtMs = double.PositiveInfinity;
-            _pressArmed = true;
-        }
+        TryReleaseRearmToIdle(nowMs, result.Overlap, reliableKey);
 
         if (!string.IsNullOrWhiteSpace(reliableKey))
         {
@@ -1799,25 +1862,27 @@ public sealed class MainForm : Form
             {
                 BeginRound(reliableKey, nowMs);
             }
-            else if (!_roundKey.Equals(reliableKey, StringComparison.OrdinalIgnoreCase))
+            else if (_roundState is RoundState.Armed or RoundState.Candidate &&
+                !_roundKey.Equals(reliableKey, StringComparison.OrdinalIgnoreCase))
             {
-                if (!_roundFired)
-                {
-                    CloseRoundAsTimeout();
-                }
+                CloseRoundAsTimeout(nowMs, waitForReset: false);
                 BeginRound(reliableKey, nowMs);
             }
         }
 
-        if (_roundState != RoundState.Idle && !_roundFired && (nowMs - _roundStartMs) >= AppConstants.RoundTimeoutMs)
+        if (_roundState is RoundState.Armed or RoundState.Candidate &&
+            !_roundFired &&
+            (nowMs - _roundStartMs) >= AppConstants.RoundTimeoutMs)
         {
-            CloseRoundAsTimeout();
+            CloseRoundAsTimeout(nowMs, waitForReset: true);
         }
 
         var strictDiffLimit = Math.Min(AppConstants.PressStrictMaxDiffDeg, _cfg.AngleToleranceDeg * AppConstants.PressStrictTolRatio);
         var triggerDiffLimit = Math.Min(AppConstants.PressTriggerDiffDeg, strictDiffLimit);
-        var isTimingOk = effectiveDiffDeg <= strictDiffLimit;
-        var isCenterOk = effectiveDiffDeg <= AppConstants.PressCenterMaxDiffDeg;
+        var centerGateLimit = Math.Max(AppConstants.PressCenterMaxDiffDeg, strictDiffLimit + 2.0);
+        var fallbackDiffLimit = Math.Max(centerGateLimit + 1.5, strictDiffLimit + 4.0);
+        var isTimingOk = effectiveDiffDeg <= (strictDiffLimit + 1.5);
+        var isCenterOk = effectiveDiffDeg <= centerGateLimit;
 
         var signedToCenterDeg = (double?)null;
         if (result.RedAngle.HasValue && hasCenterDiff)
@@ -1856,17 +1921,23 @@ public sealed class MainForm : Form
 
         var canFireRound = _roundState is RoundState.Armed or RoundState.Candidate;
         var keyToPress = canFireRound && !string.IsNullOrWhiteSpace(_roundKey) ? _roundKey : reliableKey;
+        var keyEvidenceOk = !string.IsNullOrWhiteSpace(_roundKey) &&
+            (
+                (!string.IsNullOrWhiteSpace(majorityKey) && _roundKey.Equals(majorityKey, StringComparison.OrdinalIgnoreCase)) ||
+                (ocrRoundAccepted && _roundKey.Equals(normalizedKey, StringComparison.OrdinalIgnoreCase))
+            );
         var canPress =
             AppConstants.AutoPressOnOverlap &&
             canFireRound &&
             !string.IsNullOrWhiteSpace(keyToPress) &&
+            keyEvidenceOk &&
             isFreshOcrForPress &&
             scoreOk &&
-            keyStable &&
+            ocrFireAccepted &&
             cooldownOk &&
             (
                 (schedulerDue && isTimingOk && isCenterOk) ||
-                (fallbackDue && result.Overlap && effectiveDiffDeg <= (strictDiffLimit + 1.8))
+                (fallbackDue && result.Overlap && effectiveDiffDeg <= fallbackDiffLimit)
             );
         var fallbackFireNow = canPress && fallbackDue;
         var sinceLastPressMs = _lastPressMs > 0 ? (nowMs - _lastPressMs) : -1.0;
@@ -1884,17 +1955,20 @@ public sealed class MainForm : Form
                 new[]
                 {
                     scoreOk ? null : "low-score",
+                    marginOk ? null : "low-margin",
+                    roundMarginOk ? null : "low-round-margin",
                     fireMarginOk ? null : "low-fire-margin",
                     keyStable ? null : "unstable-key",
                     isKeyOk ? null : "bad-key",
                     isFreshOcrForPress ? null : "stale-ocr",
+                    keyEvidenceOk ? null : "key-mismatch",
                     isTimingOk ? null : "bad-timing",
                     isCenterOk ? null : "off-center",
                     schedulerDue || fallbackDue ? null : "wait-schedule",
                 }.Where(x => x is not null));
 
             AppendLog(
-                $"OCR dbg | mode={mode} round={_roundId}/{_roundState} rKey={_roundKey} maj={(majorityKey ?? "-")} rel={(reliableKey ?? "-")} overlap={(result.Overlap ? "Y" : "N")} sch={(schedulerDue ? "Y" : "N")} fb={(fallbackDue ? "Y" : "N")} arm={(_pressArmed ? "Y" : "N")} fresh={(isFreshOcrForPress ? "Y" : "N")} since={(sinceLastPressMs >= 0 ? sinceLastPressMs.ToString("0") : "-")}ms key={(key ?? "-").ToUpperInvariant()} score={score:0.000}/{_ocrMinScore:0.000} m={margin:0.000}/{_ocrFireMinMarginRuntime:0.000} stable={_ocrSameKeyStreak}/{AppConstants.OcrRequireStableReads} diff={diffText}/{triggerDiffLimit:0.0} cDiff={centerDiffText}/{AppConstants.PressCenterMaxDiffDeg:0.0} eff={effectiveDiffDeg:0.0} ttc={ttcText} lat={_pressLatencyMsRuntime:0}ms press={(canPress ? (fallbackFireNow ? "fallback" : "scheduled") : "-")} reject={(string.IsNullOrWhiteSpace(rejectReason) ? "-" : rejectReason)} | {dbg}");
+                $"OCR dbg | mode={mode} round={_roundId}/{_roundState} rKey={_roundKey} rk={_rearmKey} maj={(majorityKey ?? "-")} rel={(reliableKey ?? "-")} overlap={(result.Overlap ? "Y" : "N")} sch={(schedulerDue ? "Y" : "N")} fb={(fallbackDue ? "Y" : "N")} arm={(_pressArmed ? "Y" : "N")} fresh={(isFreshOcrForPress ? "Y" : "N")} since={(sinceLastPressMs >= 0 ? sinceLastPressMs.ToString("0") : "-")}ms key={(key ?? "-").ToUpperInvariant()} score={score:0.000}/{_ocrMinScore:0.000} m={margin:0.000} thr={roundMarginThreshold:0.000}/{fireMarginThreshold:0.000} stable={_ocrSameKeyStreak}/{AppConstants.OcrRequireStableReads} diff={diffText}/{triggerDiffLimit:0.0} cDiff={centerDiffText}/{centerGateLimit:0.0} eff={effectiveDiffDeg:0.0} ttc={ttcText} lat={_pressLatencyMsRuntime:0}ms press={(canPress ? (fallbackFireNow ? "fallback" : "scheduled") : "-")} reject={(string.IsNullOrWhiteSpace(rejectReason) ? "-" : rejectReason)} | {dbg}");
             _lastOcrDebugLogMs = nowMs;
         }
 
@@ -1910,7 +1984,7 @@ public sealed class MainForm : Form
 
             _hit++;
             AppendLog($"[{DateTime.Now:HH:mm:ss}] CLICK {keyToPress.ToUpperInvariant()} | total={_hit} score={score:0.000} diff={diffText} eff={effectiveDiffDeg:0.0} state={_roundState} {(fallbackFireNow ? "fb=Y" : "fb=N")}");
-            CloseRoundAsFired(effectiveDiffDeg, fallbackFireNow);
+            CloseRoundAsFired(effectiveDiffDeg, fallbackFireNow, nowMs);
             RefreshSummary();
         }
 
