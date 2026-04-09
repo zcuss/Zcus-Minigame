@@ -1540,6 +1540,16 @@ public sealed class MainForm : Form
             }
         }
         var keyToPress = AppConstants.AutoPressUseOcrKey && isKeyOk && isFreshOcrForPress ? key?.Trim().ToUpperInvariant() : null;
+        var keyChangedSinceLastPress =
+            !string.IsNullOrWhiteSpace(keyToPress) &&
+            !string.IsNullOrWhiteSpace(_lastPressedKey) &&
+            !keyToPress.Equals(_lastPressedKey, StringComparison.OrdinalIgnoreCase);
+        var hasMinGapFromLastPress = _lastPressMs <= 0 || (nowMs - _lastPressMs) >= 35.0;
+        if (!_pressArmed && keyChangedSinceLastPress && hasMinGapFromLastPress)
+        {
+            _pressArmed = true;
+            _clearStreak = 0;
+        }
 
         var preciseCanPress =
             AppConstants.AutoPressOnOverlap &&
