@@ -55,6 +55,8 @@ public sealed class MainForm : Form
     private double? _prevTimingDiff;
     private double? _prevRedAngleDeg;
     private double _prevRedAngleMs;
+    private string _lastPressedKey = string.Empty;
+    private double _lastPressMs;
     private nint? _targetHwnd;
     private Rectangle? _cachedRegion;
     private (int capX, int capY, int capW, int capH, int scanX, int scanY, int tolX10)? _lastCfgTuple;
@@ -732,6 +734,8 @@ public sealed class MainForm : Form
                 _prevTimingDiff = null;
                 _prevRedAngleDeg = null;
                 _prevRedAngleMs = 0;
+                _lastPressedKey = string.Empty;
+                _lastPressMs = 0;
                 _statusLabel.Text = "Status: Tracking...";
                 SetStartButtonStyle(true);
                 RefreshLicenseInfo();
@@ -759,6 +763,8 @@ public sealed class MainForm : Form
         _prevTimingDiff = null;
         _prevRedAngleDeg = null;
         _prevRedAngleMs = 0;
+        _lastPressedKey = string.Empty;
+        _lastPressMs = 0;
         _statusLabel.Text = "Status: Idle";
         SetStartButtonStyle(false);
         RefreshLicenseInfo();
@@ -1443,6 +1449,16 @@ public sealed class MainForm : Form
             _ocrSameKeyStreak = string.IsNullOrWhiteSpace(normalizedKey) ? 0 : 1;
         }
         var keyStable = _ocrSameKeyStreak >= AppConstants.OcrRequireStableReads;
+        var hasNewRequiredKey =
+            !string.IsNullOrWhiteSpace(normalizedKey) &&
+            !string.IsNullOrWhiteSpace(_lastPressedKey) &&
+            !normalizedKey.Equals(_lastPressedKey, StringComparison.OrdinalIgnoreCase);
+        if (!_pressArmed && hasNewRequiredKey)
+        {
+            _pressArmed = true;
+            _clearStreak = 0;
+        }
+
         var centerDiffDeg = 999.0;
         var centerAngleDeg = 0.0;
         var hasCenterDiff = result.RedAngle.HasValue
@@ -1540,6 +1556,7 @@ public sealed class MainForm : Form
             _pressArmed &&
             (now - _lastAttempt) >= AppConstants.AttemptIntervalSec &&
             (now - _lastPress) >= AppConstants.PressDelaySec;
+        var sinceLastPressMs = _lastPressMs > 0 ? (nowMs - _lastPressMs) : -1.0;
 
         _statusLabel.Text = _scanning
             ? "Status: Tracking..."
@@ -1562,7 +1579,7 @@ public sealed class MainForm : Form
                 }.Where(x => x is not null));
 
             AppendLog(
-                $"OCR dbg | mode={mode} src={(usingFallbackOcr ? "hold" : "live")} overlap={(result.Overlap ? "Y" : "N")} touch={(isInTouchWindow ? "Y" : "N")} cross={(crossedTriggerBand ? "Y" : "N")} pred={(hasPredictiveTrigger ? "Y" : "N")} key={(key ?? "-").ToUpperInvariant()} score={score:0.000}/{_ocrMinScore:0.000} m={margin:0.000}/{_ocrMinMargin:0.000} stable={_ocrSameKeyStreak}/{AppConstants.OcrRequireStableReads} amb={(ocr.IsAmbiguous ? "Y" : "N")} diff={diffText}/{triggerDiffLimit:0.0} cDiff={centerDiffText}/{AppConstants.PressCenterMaxDiffDeg:0.0} pDiff={predDiffText} speed={(redSpeedDegPerSec.HasValue ? redSpeedDegPerSec.Value.ToString("0.0") : "-")} eff={effectiveDiffDeg:0.0} reject={(string.IsNullOrWhiteSpace(rejectReason) ? "-" : rejectReason)} | {dbg}");
+                $"OCR dbg | mode={mode} src={(usingFallbackOcr ? "hold" : "live")} overlap={(result.Overlap ? "Y" : "N")} touch={(isInTouchWindow ? "Y" : "N")} cross={(crossedTriggerBand ? "Y" : "N")} pred={(hasPredictiveTrigger ? "Y" : "N")} arm={(_pressArmed ? "Y" : "N")} keychg={(hasNewRequiredKey ? "Y" : "N")} since={(sinceLastPressMs >= 0 ? sinceLastPressMs.ToString("0") : "-")}ms last={_lastPressedKey.ToUpperInvariant()} key={(key ?? "-").ToUpperInvariant()} score={score:0.000}/{_ocrMinScore:0.000} m={margin:0.000}/{_ocrMinMargin:0.000} stable={_ocrSameKeyStreak}/{AppConstants.OcrRequireStableReads} amb={(ocr.IsAmbiguous ? "Y" : "N")} diff={diffText}/{triggerDiffLimit:0.0} cDiff={centerDiffText}/{AppConstants.PressCenterMaxDiffDeg:0.0} pDiff={predDiffText} speed={(redSpeedDegPerSec.HasValue ? redSpeedDegPerSec.Value.ToString("0.0") : "-")} eff={effectiveDiffDeg:0.0} reject={(string.IsNullOrWhiteSpace(rejectReason) ? "-" : rejectReason)} | {dbg}");
             _lastOcrDebugLogMs = nowMs;
         }
 
@@ -1573,7 +1590,9 @@ public sealed class MainForm : Form
                 NativeInput.PressKey(keyToPress);
                 _lastPress = now;
                 _lastAttempt = now;
+                _lastPressMs = nowMs;
                 _pressArmed = false;
+                _lastPressedKey = keyToPress;
                 _lastValidOcrMs = 0;
                 _touchWindowUntilMs = 0;
 
