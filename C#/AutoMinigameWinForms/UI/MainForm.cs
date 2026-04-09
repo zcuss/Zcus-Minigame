@@ -2009,26 +2009,35 @@ public sealed class MainForm : Form
             !string.IsNullOrWhiteSpace(majorityKey) &&
             _roundKey.Equals(majorityKey, StringComparison.OrdinalIgnoreCase);
         var keyEvidenceOk = currentRoundKeyConfirmed || (majorityRoundKeyConfirmed && !ocrRoundAccepted);
-        var schedulerFireReady = schedulerDue &&
-            ((centerReliable && centerForTimingDiff <= centerFireLimit) || (!centerReliable && schedulerEdgeOk));
-        var opportunisticFireReady = opportunisticEdgeDue && !centerReliable && edgeDiffDeg <= 5.8;
-        var fallbackFireReady = fallbackDue &&
-            (
-                (centerReliable && centerForTimingDiff <= (centerFireLimit + 1.5)) ||
-                (!centerReliable && result.Overlap && edgeDiffDeg <= fallbackEdgeLimit)
-            );
-        var hardFallbackFireReady = hardFallbackDue &&
-            (
-                (centerReliable && centerForTimingDiff <= (centerFireLimit + 7.5)) ||
-                (!centerReliable && result.Overlap && edgeDiffDeg <= 10.5) ||
-                (!centerReliable && timeToCenterMs.HasValue && timeToCenterMs.Value <= 240.0 && edgeDiffDeg <= 9.5)
-            );
-        var overlapGate = result.Overlap ||
-            edgeDiffDeg <= 2.5 ||
-            (centerReliable && centerForTimingDiff <= 8.0);
+        var schedulerFireReady = false;
+        var opportunisticFireReady = false;
+        var fallbackFireReady = false;
+        var hardFallbackFireReady = false;
         var qualityFireOk = centerReliable
-            ? centerForTimingDiff <= (centerFireLimit + 2.0)
-            : edgeDiffDeg <= 9.0;
+            ? centerForTimingDiff <= (centerFireLimit + 4.5)
+            : edgeDiffDeg <= 11.0;
+
+        if (centerReliable)
+        {
+            schedulerFireReady = schedulerDue && centerForTimingDiff <= centerFireLimit;
+            fallbackFireReady = fallbackDue && centerForTimingDiff <= (centerFireLimit + 1.8);
+            hardFallbackFireReady = hardFallbackDue && centerForTimingDiff <= (centerFireLimit + 5.0);
+        }
+        else
+        {
+            schedulerFireReady = schedulerDue && schedulerEdgeOk;
+            opportunisticFireReady = opportunisticEdgeDue && edgeDiffDeg <= 5.5;
+            fallbackFireReady = fallbackDue &&
+                (
+                    (result.Overlap && edgeDiffDeg <= fallbackEdgeLimit) ||
+                    edgeDiffDeg <= 5.0
+                );
+            hardFallbackFireReady = hardFallbackDue &&
+                (
+                    edgeDiffDeg <= 9.5 ||
+                    (timeToCenterMs.HasValue && timeToCenterMs.Value <= 260.0 && edgeDiffDeg <= 11.0)
+                );
+        }
         var canPress =
             AppConstants.AutoPressOnOverlap &&
             canFireRound &&
@@ -2037,7 +2046,6 @@ public sealed class MainForm : Form
             isFreshOcrForPress &&
             scoreOk &&
             ocrFireAccepted &&
-            overlapGate &&
             qualityFireOk &&
             cooldownOk &&
             (
@@ -2071,7 +2079,6 @@ public sealed class MainForm : Form
                     keyEvidenceOk ? null : "key-mismatch",
                     isTimingOk ? null : "bad-timing",
                     isCenterOk ? null : "off-center",
-                    overlapGate ? null : "not-overlap",
                     qualityFireOk ? null : "quality-low",
                     centerReliable ? null : "center-unreliable",
                     centerReliable && centerDiffDeg > centerFireLimit ? "center-far" : null,
