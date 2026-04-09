@@ -16,12 +16,12 @@ public static class AppConstants
     public const int OcrIntervalMs = 30;
     public const int OcrHoldMs = 120;
     public const int OcrRequireStableReads = 1;
-    public const double AttemptIntervalSec = 0.03;
+    public const double AttemptIntervalSec = 0.00;
     public const int WindowRefreshMs = 200;
 
     public const bool AutoPressOnOverlap = true;
     public const bool AutoPressUseOcrKey = true;
-    public const double PressDelaySec = 0.03;
+    public const double PressDelaySec = 0.00;
     public const int PressRequireStableFrames = 1;
     public const double PressStrictMaxDiffDeg = 12.0;
     public const double PressStrictTolRatio = 0.70;
@@ -39,7 +39,7 @@ public static class AppConstants
     public const int LiveProfileOcrBoxMinSize = 36;
     public const int LiveProfileOcrMinScoreX100 = 8;
     public const int LiveProfileOcrMinMarginX100 = 3;
-    public const int LiveProfilePressLatencyMs = 62;
+    public const int LiveProfilePressLatencyMs = 0;
     public const bool LiveProfilePressLatencyAutoTune = false;
     public const double LiveProfileFallbackDeadlineRatio = 0.78;
     public const int LiveProfileOcrMajorityWindow = 3;

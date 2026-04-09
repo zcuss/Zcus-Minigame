@@ -1005,7 +1005,7 @@ public sealed class MainForm : Form
         {
             if (effectiveDiffDeg > 11.0)
             {
-                _pressLatencyMsRuntime = Math.Max(20.0, _pressLatencyMsRuntime - 2.0);
+                _pressLatencyMsRuntime = Math.Max(0.0, _pressLatencyMsRuntime - 2.0);
             }
             else if (effectiveDiffDeg < 2.6)
             {
@@ -1456,7 +1456,7 @@ public sealed class MainForm : Form
             StartHotkeyModifier = (_cbHotkeyModifier.SelectedItem?.ToString() ?? AppConstants.DefaultStartHotkeyModifier).Trim(),
             StartHotkey = (_cbStartHotkey.SelectedItem?.ToString() ?? AppConstants.DefaultStartHotkey).Trim(),
             TuningProfile = profile,
-            PressLatencyMs = (int)Math.Round(Math.Clamp(_pressLatencyMsRuntime, 20.0, 180.0)),
+            PressLatencyMs = (int)Math.Round(Math.Clamp(_pressLatencyMsRuntime, 0.0, 180.0)),
             PressLatencyAutoTune = _pressLatencyAutoTuneRuntime,
             FallbackDeadlineRatio = Math.Clamp(_fallbackDeadlineRatioRuntime, 0.45, 0.95),
             OcrMajorityWindow = Math.Clamp(_ocrMajorityWindowRuntime, 1, 7),
@@ -1517,7 +1517,7 @@ public sealed class MainForm : Form
         ApplyStartHotkey(hotkeyModifier, hotkeyText);
         _tbHotkey.Text = BuildHotkeyDisplay(NormalizeHotkeyModifier(hotkeyModifier), NormalizeHotkey(hotkeyText));
 
-        _pressLatencyMsRuntime = Math.Clamp(cfg.PressLatencyMs, 20.0, 180.0);
+        _pressLatencyMsRuntime = Math.Clamp(cfg.PressLatencyMs, 0.0, 180.0);
         _pressLatencyAutoTuneRuntime = cfg.PressLatencyAutoTune;
         _fallbackDeadlineRatioRuntime = Math.Clamp(cfg.FallbackDeadlineRatio, 0.45, 0.95);
         _ocrMajorityWindowRuntime = Math.Clamp(cfg.OcrMajorityWindow, 1, 7);
@@ -1526,7 +1526,7 @@ public sealed class MainForm : Form
         {
             _ocrMajorityWindowRuntime = Math.Clamp(_ocrMajorityWindowRuntime, 3, 5);
             _ocrFireMinMarginRuntime = Math.Min(_ocrFireMinMarginRuntime, 0.040);
-            _pressLatencyMsRuntime = Math.Clamp(_pressLatencyMsRuntime, 60.0, 120.0);
+            _pressLatencyMsRuntime = 0.0;
             _pressLatencyAutoTuneRuntime = false;
         }
 
@@ -1570,7 +1570,7 @@ public sealed class MainForm : Form
             ? AppConstants.LiveProfileOcrMinMarginX100
             : Math.Min(cfg.OcrMinMarginX100, AppConstants.LiveProfileOcrMinMarginX100);
 
-        cfg.PressLatencyMs = cfg.PressLatencyMs <= 0 ? AppConstants.LiveProfilePressLatencyMs : cfg.PressLatencyMs;
+        cfg.PressLatencyMs = AppConstants.LiveProfilePressLatencyMs;
         cfg.PressLatencyAutoTune = AppConstants.LiveProfilePressLatencyAutoTune;
         cfg.FallbackDeadlineRatio = cfg.FallbackDeadlineRatio <= 0 ? AppConstants.LiveProfileFallbackDeadlineRatio : cfg.FallbackDeadlineRatio;
         cfg.OcrMajorityWindow = cfg.OcrMajorityWindow <= 0 ? AppConstants.LiveProfileOcrMajorityWindow : cfg.OcrMajorityWindow;
@@ -2028,7 +2028,7 @@ public sealed class MainForm : Form
         var deadlineRescueFireReady = false;
         var qualityFireOk = centerReliable
             ? centerForTimingDiff <= (centerFireLimit + 1.8)
-            : edgeDiffDeg <= 8.5;
+            : edgeDiffDeg <= 12.0;
 
         if (centerReliable)
         {
@@ -2039,23 +2039,26 @@ public sealed class MainForm : Form
         else
         {
             schedulerFireReady = schedulerDue && edgeDiffDeg <= schedulerEdgeLimit;
-            opportunisticFireReady = opportunisticEdgeDue && edgeDiffDeg <= 5.8;
+            opportunisticFireReady = opportunisticEdgeDue && edgeDiffDeg <= 10.5;
             fallbackFireReady = fallbackDue &&
                 (
-                    result.Overlap && edgeDiffDeg <= 6.2
+                    result.Overlap && edgeDiffDeg <= 11.5
                 );
             hardFallbackFireReady = hardFallbackDue &&
                 (
-                    (result.Overlap && edgeDiffDeg <= 8.5) ||
-                    (timeToCenterMs.HasValue && timeToCenterMs.Value <= 220.0 && edgeDiffDeg <= 9.5)
+                    (result.Overlap && edgeDiffDeg <= 14.0) ||
+                    (timeToCenterMs.HasValue && timeToCenterMs.Value <= 260.0 && edgeDiffDeg <= 14.5)
                 );
         }
 
         if (hardFallbackDue && !hardFallbackFireReady)
         {
             var roundAgeMs = nowMs - _roundStartMs;
-            var deepDeadline = roundAgeMs >= (AppConstants.RoundTimeoutMs * 0.96);
-            var hasTimingSignal = result.Overlap || timeToCenterMs.HasValue || _roundBestEffDiff <= 20.0;
+            var deepDeadline = roundAgeMs >= (AppConstants.RoundTimeoutMs * 0.97);
+            var hasTimingSignal =
+                (result.Overlap && edgeDiffDeg <= 12.0) ||
+                (timeToCenterMs.HasValue && timeToCenterMs.Value <= 180.0) ||
+                _roundBestEffDiff <= 14.0;
             deadlineRescueFireReady = deepDeadline && hasTimingSignal;
         }
 

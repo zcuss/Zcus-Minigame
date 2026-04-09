@@ -208,10 +208,13 @@ public sealed class LogBridgeServer : IDisposable
         var appClicks = app.Count(x => x.Line.Contains("CLICK ", StringComparison.OrdinalIgnoreCase));
         var appSessionRows = app.Count(x => x.Line.StartsWith("Session |", StringComparison.OrdinalIgnoreCase));
 
-        var testerAttempts = tester.Count(x => x.Line.Contains(" req=", StringComparison.OrdinalIgnoreCase) && x.Line.Contains(" press=", StringComparison.OrdinalIgnoreCase));
-        var testerHits = tester.Count(x => x.Line.Contains(" HIT ", StringComparison.OrdinalIgnoreCase));
-        var testerMisses = tester.Count(x => x.Line.Contains(" MISS ", StringComparison.OrdinalIgnoreCase));
-        var testerTimeouts = tester.Count(x => x.Line.Contains("TIMEOUT", StringComparison.OrdinalIgnoreCase));
+        var testerAttemptLines = tester
+            .Where(x => x.Line.Contains(" req=", StringComparison.OrdinalIgnoreCase) && x.Line.Contains(" press=", StringComparison.OrdinalIgnoreCase))
+            .ToList();
+        var testerAttempts = testerAttemptLines.Count;
+        var testerHits = testerAttemptLines.Count(x => x.Line.Contains(" HIT ", StringComparison.OrdinalIgnoreCase));
+        var testerMisses = testerAttemptLines.Count(x => x.Line.Contains(" MISS ", StringComparison.OrdinalIgnoreCase));
+        var testerTimeouts = testerAttemptLines.Count(x => x.Line.Contains(" press=TIMEOUT", StringComparison.OrdinalIgnoreCase));
 
         return new CompareResult(
             AppCount: app.Count,
