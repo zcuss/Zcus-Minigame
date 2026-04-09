@@ -40,7 +40,7 @@ public static class AppConstants
     public const int LiveProfileOcrMinScoreX100 = 8;
     public const int LiveProfileOcrMinMarginX100 = 3;
     public const int LiveProfilePressLatencyMs = 62;
-    public const bool LiveProfilePressLatencyAutoTune = true;
+    public const bool LiveProfilePressLatencyAutoTune = false;
     public const double LiveProfileFallbackDeadlineRatio = 0.78;
     public const int LiveProfileOcrMajorityWindow = 3;
     public const int LiveProfileOcrFireMinMarginX100 = 3;
