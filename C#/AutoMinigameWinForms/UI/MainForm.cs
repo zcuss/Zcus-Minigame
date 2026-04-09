@@ -2011,19 +2011,24 @@ public sealed class MainForm : Form
         var keyEvidenceOk = currentRoundKeyConfirmed || (majorityRoundKeyConfirmed && !ocrRoundAccepted);
         var schedulerFireReady = schedulerDue &&
             ((centerReliable && centerForTimingDiff <= centerFireLimit) || (!centerReliable && schedulerEdgeOk));
-        var opportunisticFireReady = opportunisticEdgeDue && edgeDiffDeg <= opportunisticEdgeLimit;
+        var opportunisticFireReady = opportunisticEdgeDue && !centerReliable && edgeDiffDeg <= 5.8;
         var fallbackFireReady = fallbackDue &&
             (
                 (centerReliable && centerForTimingDiff <= (centerFireLimit + 1.5)) ||
-                (result.Overlap && edgeDiffDeg <= fallbackEdgeLimit)
+                (!centerReliable && result.Overlap && edgeDiffDeg <= fallbackEdgeLimit)
             );
         var hardFallbackFireReady = hardFallbackDue &&
             (
                 (centerReliable && centerForTimingDiff <= (centerFireLimit + 7.5)) ||
-                (result.Overlap && edgeDiffDeg <= 18.0) ||
-                (timeToCenterMs.HasValue && timeToCenterMs.Value <= 280.0) ||
-                edgeDiffDeg <= 14.0
+                (!centerReliable && result.Overlap && edgeDiffDeg <= 10.5) ||
+                (!centerReliable && timeToCenterMs.HasValue && timeToCenterMs.Value <= 240.0 && edgeDiffDeg <= 9.5)
             );
+        var overlapGate = result.Overlap ||
+            edgeDiffDeg <= 2.5 ||
+            (centerReliable && centerForTimingDiff <= 8.0);
+        var qualityFireOk = centerReliable
+            ? centerForTimingDiff <= (centerFireLimit + 2.0)
+            : edgeDiffDeg <= 9.0;
         var canPress =
             AppConstants.AutoPressOnOverlap &&
             canFireRound &&
@@ -2032,6 +2037,8 @@ public sealed class MainForm : Form
             isFreshOcrForPress &&
             scoreOk &&
             ocrFireAccepted &&
+            overlapGate &&
+            qualityFireOk &&
             cooldownOk &&
             (
                 schedulerFireReady ||
@@ -2064,6 +2071,8 @@ public sealed class MainForm : Form
                     keyEvidenceOk ? null : "key-mismatch",
                     isTimingOk ? null : "bad-timing",
                     isCenterOk ? null : "off-center",
+                    overlapGate ? null : "not-overlap",
+                    qualityFireOk ? null : "quality-low",
                     centerReliable ? null : "center-unreliable",
                     centerReliable && centerDiffDeg > centerFireLimit ? "center-far" : null,
                     schedulerEdgeOk ? null : "edge-far",
