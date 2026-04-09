@@ -1496,7 +1496,7 @@ public sealed class MainForm : Form
         var strictDiffLimit = Math.Min(AppConstants.PressStrictMaxDiffDeg, _cfg.AngleToleranceDeg * AppConstants.PressStrictTolRatio);
         var triggerDiffLimit = Math.Min(AppConstants.PressTriggerDiffDeg, strictDiffLimit);
         var isKeyOk = IsAllowedAndMapped(key, allowedKeys);
-        var isFreshOcrForPress = !usingFallbackOcr && (nowMs - _lastOcrMs) <= (AppConstants.OcrIntervalMs * 4.0);
+        var isFreshOcrForPress = !usingFallbackOcr && (nowMs - _lastOcrMs) <= (AppConstants.OcrIntervalMs * 8.0);
         var isTimingOk = effectiveDiffDeg <= strictDiffLimit;
         var isTriggerDiffOk = effectiveDiffDeg <= triggerDiffLimit;
         var fallbackCenterLimit = Math.Max(2.2, strictDiffLimit * 0.35);
