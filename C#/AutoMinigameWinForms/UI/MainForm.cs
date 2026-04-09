@@ -1538,8 +1538,9 @@ public sealed class MainForm : Form
         var isFreshOcrForPress = (nowMs - _lastOcrMs) <= (AppConstants.OcrIntervalMs * 6.0) && (!usingFallbackOcr || keyStable);
         var isTimingOk = effectiveDiffDeg <= strictDiffLimit;
         var movingAwayAfterClose = _prevTimingDiff.HasValue
-            && _prevTimingDiff.Value <= (strictDiffLimit + 1.4)
-            && effectiveDiffDeg > (_prevTimingDiff.Value + 0.60);
+            && _prevTimingDiff.Value <= (strictDiffLimit + 2.6)
+            && effectiveDiffDeg <= (strictDiffLimit + 2.8)
+            && effectiveDiffDeg > (_prevTimingDiff.Value + 0.40);
         var isTriggerDiffOk = effectiveDiffDeg <= triggerDiffLimit || movingAwayAfterClose;
         var fallbackCenterLimit = Math.Max(2.2, strictDiffLimit * 0.35);
         var isCenterOk = hasCenterDiff
@@ -1559,7 +1560,7 @@ public sealed class MainForm : Form
         }
         var isInTouchWindow = result.Overlap && nowMs <= _touchWindowUntilMs;
         var hasTriggerSignal = crossedTriggerBand || (result.Overlap && isTimingOk && isInTouchWindow) || hasPredictiveTrigger || movingAwayAfterClose;
-        var hasRelaxedOverlapSignal = justTouched && result.Overlap && isKeyOk && scoreOk && keyStable && marginOk && isFreshOcrForPress;
+        var hasRelaxedOverlapSignal = result.Overlap && isInTouchWindow && isKeyOk && scoreOk && keyStable && marginOk && isFreshOcrForPress;
 
         if (isStableFrame)
         {
@@ -1607,8 +1608,15 @@ public sealed class MainForm : Form
             _pressArmed &&
             (now - _lastAttempt) >= AppConstants.AttemptIntervalSec &&
             (now - _lastPress) >= AppConstants.PressDelaySec;
-        var relaxedCanPress = false;
-        var canPress = preciseCanPress;
+        var relaxedCanPress =
+            AppConstants.AutoPressOnOverlap &&
+            hasRelaxedOverlapSignal &&
+            effectiveDiffDeg <= (strictDiffLimit + 1.2) &&
+            hasCenterGate &&
+            _pressArmed &&
+            (now - _lastAttempt) >= AppConstants.AttemptIntervalSec &&
+            (now - _lastPress) >= AppConstants.PressDelaySec;
+        var canPress = preciseCanPress || relaxedCanPress;
         var sinceLastPressMs = _lastPressMs > 0 ? (nowMs - _lastPressMs) : -1.0;
 
         _statusLabel.Text = _scanning

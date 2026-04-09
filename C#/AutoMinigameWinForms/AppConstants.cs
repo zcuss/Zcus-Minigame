@@ -22,12 +22,12 @@ public static class AppConstants
     public const bool AutoPressUseOcrKey = true;
     public const double PressDelaySec = 0.03;
     public const int PressRequireStableFrames = 1;
-    public const double PressStrictMaxDiffDeg = 9.0;
+    public const double PressStrictMaxDiffDeg = 12.0;
     public const double PressStrictTolRatio = 0.70;
-    public const double PressTriggerDiffDeg = 6.8;
+    public const double PressTriggerDiffDeg = 9.6;
     public const int PressRearmClearFrames = 1;
     public const int PressTouchWindowMs = 160;
-    public const double PressCenterMaxDiffDeg = 8.5;
+    public const double PressCenterMaxDiffDeg = 11.5;
     public const double PressPredictionLeadMs = 55.0;
     public const double PressPredictionMaxLeadDeg = 20.0;
     public const double PressPredictionMinSpeedDegPerSec = 60.0;
