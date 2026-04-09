@@ -701,22 +701,32 @@ public sealed class MainForm : Form
         {
             _toggleBusy = true;
             _btnStart.Enabled = false;
-            _statusLabel.Text = "Status: Validating license...";
+            _statusLabel.Text = AppConstants.DebugBypassLicense
+                ? "Status: Debug start..."
+                : "Status: Validating license...";
             try
             {
-                var check = await _licenseService.RevalidateStoredLicenseAsync(_configPath, _runtimeConfig);
-                if (!check.ok)
+                if (!AppConstants.DebugBypassLicense)
                 {
-                    _statusLabel.Text = "Status: License invalid";
-                    SetStartButtonStyle(false);
-                    RefreshLicenseInfo();
-                    MessageBox.Show(
-                        this,
-                        $"License invalid: {check.message}",
-                        "License",
-                        MessageBoxButtons.OK,
-                        MessageBoxIcon.Warning);
-                    return;
+                    var check = await _licenseService.RevalidateStoredLicenseAsync(_configPath, _runtimeConfig);
+                    if (!check.ok)
+                    {
+                        _statusLabel.Text = "Status: License invalid";
+                        SetStartButtonStyle(false);
+                        RefreshLicenseInfo();
+                        MessageBox.Show(
+                            this,
+                            $"License invalid: {check.message}",
+                            "License",
+                            MessageBoxButtons.OK,
+                            MessageBoxIcon.Warning);
+                        return;
+                    }
+                }
+                else
+                {
+                    _runtimeConfig.LicenseLastMessage = "DEBUG MODE: license bypass aktif.";
+                    _runtimeConfig.LicenseLastVerifiedAt = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
                 }
 
                 _lastLicenseRevalidateAtSec = _clock.Elapsed.TotalSeconds;
@@ -739,7 +749,7 @@ public sealed class MainForm : Form
                 _statusLabel.Text = "Status: Tracking...";
                 SetStartButtonStyle(true);
                 RefreshLicenseInfo();
-                AppendLog("Bot: Started");
+                AppendLog(AppConstants.DebugBypassLicense ? "Bot: Started (DEBUG no-license)" : "Bot: Started");
                 return;
             }
             finally
@@ -785,6 +795,22 @@ public sealed class MainForm : Form
 
     private void RefreshLicenseInfo()
     {
+        if (AppConstants.DebugBypassLicense)
+        {
+            if (_licenseInfoBox is null)
+            {
+                return;
+            }
+
+            _licenseInfoBox.Text =
+                "LICENSE INFO" + Environment.NewLine +
+                "Mode: DEBUG (BYPASS)" + Environment.NewLine +
+                "User: -" + Environment.NewLine +
+                "Key: -" + Environment.NewLine +
+                $"Last Verify: {DateTime.Now:yyyy-MM-dd HH:mm:ss}";
+            return;
+        }
+
         var owner = string.IsNullOrWhiteSpace(_runtimeConfig.LicenseOwner) ? "-" : _runtimeConfig.LicenseOwner;
         var key = string.IsNullOrWhiteSpace(_runtimeConfig.LicenseKey)
             ? "-"
@@ -806,6 +832,17 @@ public sealed class MainForm : Form
 
     private void ShowLicenseInfoDialog()
     {
+        if (AppConstants.DebugBypassLicense)
+        {
+            MessageBox.Show(
+                this,
+                "Mode: DEBUG (BYPASS LICENSE)\nAuto-start: aktif\nValidasi license: nonaktif",
+                "License Info",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Information);
+            return;
+        }
+
         var owner = string.IsNullOrWhiteSpace(_runtimeConfig.LicenseOwner) ? "-" : _runtimeConfig.LicenseOwner;
         var key = string.IsNullOrWhiteSpace(_runtimeConfig.LicenseKey) ? "-" : _runtimeConfig.LicenseKey;
         var machine = string.IsNullOrWhiteSpace(_runtimeConfig.MachineId) ? "-" : _runtimeConfig.MachineId;
@@ -1336,7 +1373,9 @@ public sealed class MainForm : Form
 
         _statusLabel.Text = "Status: Tracking...";
 
-        if ((now - _lastLicenseRevalidateAtSec) >= RuntimeRevalidateIntervalSec && !_isRuntimeRevalidating)
+        if (!AppConstants.DebugBypassLicense &&
+            (now - _lastLicenseRevalidateAtSec) >= RuntimeRevalidateIntervalSec &&
+            !_isRuntimeRevalidating)
         {
             _ = RuntimeRevalidateAsync(now);
         }
@@ -1829,6 +1868,12 @@ public sealed class MainForm : Form
 
     private async Task RuntimeRevalidateAsync(double now)
     {
+        if (AppConstants.DebugBypassLicense)
+        {
+            _lastLicenseRevalidateAtSec = now;
+            return;
+        }
+
         _isRuntimeRevalidating = true;
         try
         {
@@ -1863,6 +1908,11 @@ public sealed class MainForm : Form
         ApplyStartHotkey(
             (_cbHotkeyModifier.SelectedItem?.ToString() ?? AppConstants.DefaultStartHotkeyModifier).Trim(),
             (_cbStartHotkey.SelectedItem?.ToString() ?? AppConstants.DefaultStartHotkey).Trim());
+
+        if (AppConstants.DebugAutoStart && !_scanning)
+        {
+            BeginInvoke(new Action(() => _ = ToggleScanAsync()));
+        }
     }
 
     protected override void WndProc(ref Message m)

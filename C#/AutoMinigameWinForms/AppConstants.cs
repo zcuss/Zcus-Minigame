@@ -4,6 +4,9 @@ namespace AutoMinigameWinForms;
 
 public static class AppConstants
 {
+    public static readonly bool DebugBypassLicense = true;
+    public static readonly bool DebugAutoStart = true;
+
     public const string WindowTitle = "FiveM";
     public const int UpdateMs = 1;
     public const int MaxDetectFps = 0;
