@@ -140,6 +140,8 @@
     <div class="log-actions">
         <button id="copyReportBtn">Copy Log</button>
         <button id="copyCsvBtn">Copy CSV</button>
+        <button id="compareApiBtn">Compare API</button>
+        <button id="clearApiBtn">Clear API</button>
         <button id="clearReportBtn">Clear</button>
     </div>
     <textarea id="reportBox" readonly></textarea>
@@ -159,6 +161,8 @@ const ctx = canvas.getContext("2d");
 const MODE_WASD = 0;
 const MODE_1234 = 1;
 const MODE_STORAGE_KEY = "asm_game_mode";
+const API_BASE_STORAGE_KEY = "asm_api_base_url";
+const DEFAULT_API_BASE = "http://127.0.0.1:8765";
 
 let gameMode = MODE_WASD;
 const modeText = document.getElementById("modeText");
@@ -222,10 +226,20 @@ const reportSummaryEl = document.getElementById("reportSummary");
 const reportBoxEl = document.getElementById("reportBox");
 const copyReportBtn = document.getElementById("copyReportBtn");
 const copyCsvBtn = document.getElementById("copyCsvBtn");
+const compareApiBtn = document.getElementById("compareApiBtn");
+const clearApiBtn = document.getElementById("clearApiBtn");
 const clearReportBtn = document.getElementById("clearReportBtn");
 const startBtn = document.getElementById("startBtn");
 const stopBtn = document.getElementById("stopBtn");
 const modeSwitchBtn = document.getElementById("modeSwitchBtn");
+const API_BASE = (() => {
+    try{
+        const saved = (localStorage.getItem(API_BASE_STORAGE_KEY) || "").trim();
+        return saved || DEFAULT_API_BASE;
+    } catch (_) {
+        return DEFAULT_API_BASE;
+    }
+})();
 
 function isValidMode(mode){
     return mode === MODE_WASD || mode === MODE_1234;
@@ -434,9 +448,58 @@ function updateStats(){
     reportBoxEl.value = attempts.join("\n");
 }
 
+function apiUrl(path){
+    const base = API_BASE.endsWith("/") ? API_BASE.slice(0, -1) : API_BASE;
+    return `${base}${path}`;
+}
+
+async function postTesterLog(line){
+    try{
+        await fetch(apiUrl("/api/logs/tester"), {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ source: "tester", line })
+        });
+    } catch (_) {}
+}
+
+async function compareApiLogs(){
+    try{
+        const res = await fetch(apiUrl("/api/logs/compare"));
+        if(!res.ok){
+            appendInfo(`API COMPARE ERROR status=${res.status}`);
+            updateStats();
+            return;
+        }
+        const data = await res.json();
+        appendInfo(`API CMP appClick=${data.appClicks ?? "-"} testerTry=${data.testerAttempts ?? "-"} timeout=${data.testerTimeouts ?? "-"} gap=${data.clickGap ?? "-"}`);
+        updateStats();
+    } catch (_) {
+        appendInfo("API COMPARE ERROR request-failed");
+        updateStats();
+    }
+}
+
+async function clearApiLogs(){
+    try{
+        await fetch(apiUrl("/api/logs/clear"), {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: "{}"
+        });
+        appendInfo("API log cleared");
+        updateStats();
+    } catch (_) {
+        appendInfo("API clear failed");
+        updateStats();
+    }
+}
+
 function appendInfo(text){
     const ts = new Date().toLocaleTimeString();
-    attempts.push(`[${ts}] INFO ${text}`);
+    const line = `[${ts}] INFO ${text}`;
+    attempts.push(line);
+    postTesterLog(line);
     if(attempts.length > 300) attempts.shift();
 }
 
@@ -452,7 +515,9 @@ function appendAttempt(req, press, hit, offsetDeg){
     }
 
     const ts = new Date().toLocaleTimeString();
-    attempts.push(`[${ts}] mode=${gameMode === 0 ? "WASD" : GAME2.name} req=${req} press=${press} ${hit ? "HIT" : "MISS"} offset=${offsetDeg.toFixed(2)}°`);
+    const line = `[${ts}] mode=${gameMode === 0 ? "WASD" : GAME2.name} req=${req} press=${press} ${hit ? "HIT" : "MISS"} offset=${offsetDeg.toFixed(2)}°`;
+    attempts.push(line);
+    postTesterLog(line);
     if(attempts.length > 300) attempts.shift();
 
     updateStats();
@@ -541,6 +606,14 @@ copyCsvBtn.addEventListener("click", async () => {
     try{
         await navigator.clipboard.writeText(rows.join("\n"));
     } catch (_) {}
+});
+
+compareApiBtn.addEventListener("click", () => {
+    compareApiLogs();
+});
+
+clearApiBtn.addEventListener("click", () => {
+    clearApiLogs();
 });
 
 clearReportBtn.addEventListener("click", () => {

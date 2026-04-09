@@ -72,6 +72,7 @@ public static class AppConstants
     public const string LicenseApiUrl = "http://db2.zcus.biz.id:3007/api/license/validate";
     public const string LicenseProductCode = "ZERO_MINIGAME";
     public const int LicenseApiTimeoutSec = 15;
+    public const string LogBridgeApiBaseUrl = "http://127.0.0.1:8765/";
 
     public static readonly IReadOnlyDictionary<string, byte> VkMap = new Dictionary<string, byte>(StringComparer.OrdinalIgnoreCase)
     {

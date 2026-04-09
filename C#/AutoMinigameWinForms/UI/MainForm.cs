@@ -38,6 +38,7 @@ public sealed class MainForm : Form
     private readonly string _configPath;
     private readonly AppConfig _runtimeConfig;
     private readonly LicenseService _licenseService;
+    private readonly LogBridgeServer? _logBridge;
     private readonly SimpleConfig _cfg = AppConstants.CreateDefaultDetectorConfig();
     private readonly OcrEngine _ocrEngine = new();
     private readonly Stopwatch _clock = Stopwatch.StartNew();
@@ -150,11 +151,12 @@ public sealed class MainForm : Form
     private TextBox _tbWindowTitle = null!;
     private TextBox _tbHotkey = null!;
 
-    public MainForm(string configPath, AppConfig runtimeConfig, LicenseService licenseService)
+    public MainForm(string configPath, AppConfig runtimeConfig, LicenseService licenseService, LogBridgeServer? logBridge = null)
     {
         _configPath = configPath;
         _runtimeConfig = runtimeConfig;
         _licenseService = licenseService;
+        _logBridge = logBridge;
         BuildUi();
         BuildMiniCapture();
         LoadConfigFile();
@@ -1326,6 +1328,15 @@ public sealed class MainForm : Form
     private void AppendLog(string line)
     {
         const int maxLines = 120;
+        try
+        {
+            _logBridge?.PublishAppLog(line);
+        }
+        catch
+        {
+            // Ignore bridge delivery errors so UI logging stays stable.
+        }
+
         var existingLines = _logBox.Lines;
         if (existingLines.Length >= maxLines)
         {
@@ -1994,7 +2005,6 @@ public sealed class MainForm : Form
             result.Overlap ||
             edgeDiffDeg <= fallbackWindowDiffLimit ||
             (timeToCenterMs.HasValue && timeToCenterMs.Value <= 220.0);
-        var fallbackEdgeLimit = 14.0;
 
         var cooldownOk = _pressArmed &&
             (now - _lastAttempt) >= AppConstants.AttemptIntervalSec &&
@@ -2016,32 +2026,29 @@ public sealed class MainForm : Form
         var fallbackFireReady = false;
         var hardFallbackFireReady = false;
         var qualityFireOk = centerReliable
-            ? centerForTimingDiff <= (centerFireLimit + 7.5)
-            : edgeDiffDeg <= 15.0;
+            ? centerForTimingDiff <= (centerFireLimit + 1.8)
+            : edgeDiffDeg <= 8.5;
 
         if (centerReliable)
         {
-            schedulerFireReady = schedulerDue && centerForTimingDiff <= (centerFireLimit + 2.5);
-            fallbackFireReady = fallbackDue && centerForTimingDiff <= (centerFireLimit + 5.0);
-            hardFallbackFireReady = hardFallbackDue && centerForTimingDiff <= (centerFireLimit + 9.0);
+            schedulerFireReady = schedulerDue && centerForTimingDiff <= centerFireLimit;
+            fallbackFireReady = fallbackDue && centerForTimingDiff <= (centerFireLimit + 1.5);
+            hardFallbackFireReady = hardFallbackDue && centerForTimingDiff <= (centerFireLimit + 3.0);
         }
         else
         {
-            schedulerFireReady = schedulerDue && edgeDiffDeg <= (schedulerEdgeLimit + 2.0);
-            opportunisticFireReady = opportunisticEdgeDue && edgeDiffDeg <= opportunisticEdgeLimit;
+            schedulerFireReady = schedulerDue && edgeDiffDeg <= schedulerEdgeLimit;
+            opportunisticFireReady = opportunisticEdgeDue && edgeDiffDeg <= 5.8;
             fallbackFireReady = fallbackDue &&
                 (
-                    (result.Overlap && edgeDiffDeg <= fallbackEdgeLimit) ||
-                    edgeDiffDeg <= 10.5
+                    result.Overlap && edgeDiffDeg <= 6.2
                 );
             hardFallbackFireReady = hardFallbackDue &&
                 (
-                    (result.Overlap && edgeDiffDeg <= 18.0) ||
-                    edgeDiffDeg <= 14.0 ||
-                    (timeToCenterMs.HasValue && timeToCenterMs.Value <= 300.0 && edgeDiffDeg <= 16.0)
+                    (result.Overlap && edgeDiffDeg <= 8.5) ||
+                    (timeToCenterMs.HasValue && timeToCenterMs.Value <= 220.0 && edgeDiffDeg <= 9.5)
                 );
         }
-        var overlapSoftReady = result.Overlap && edgeDiffDeg <= 16.0;
         var canPress =
             AppConstants.AutoPressOnOverlap &&
             canFireRound &&
@@ -2055,8 +2062,7 @@ public sealed class MainForm : Form
                 schedulerFireReady ||
                 opportunisticFireReady ||
                 fallbackFireReady ||
-                hardFallbackFireReady ||
-                overlapSoftReady
+                hardFallbackFireReady
             );
         var fallbackFireNow = canPress && (fallbackDue || hardFallbackDue);
         var sinceLastPressMs = _lastPressMs > 0 ? (nowMs - _lastPressMs) : -1.0;
@@ -2087,7 +2093,7 @@ public sealed class MainForm : Form
                     schedulerEdgeOk ? null : "edge-far",
                     fallbackDue && !fallbackWindowReady ? "fallback-window" : null,
                     hardFallbackDue && !hardFallbackFireReady ? "hard-fallback-window" : null,
-                    schedulerFireReady || fallbackFireReady || opportunisticFireReady || hardFallbackFireReady || overlapSoftReady ? null : "wait-schedule",
+                    schedulerFireReady || fallbackFireReady || opportunisticFireReady || hardFallbackFireReady ? null : "wait-schedule",
                 }.Where(x => x is not null));
 
             var dbgReliable = reliableKey ?? "-";
@@ -2095,7 +2101,7 @@ public sealed class MainForm : Form
                 _lastDbgRoundId != _roundId ||
                 _lastDbgRoundState != _roundState ||
                 !_lastDbgReliableKey.Equals(dbgReliable, StringComparison.OrdinalIgnoreCase);
-            var dbgAction = canPress || schedulerFireReady || fallbackFireReady || opportunisticFireReady || hardFallbackFireReady || overlapSoftReady;
+            var dbgAction = canPress || schedulerFireReady || fallbackFireReady || opportunisticFireReady || hardFallbackFireReady;
             var dbgRejectChanged = !_lastDbgReject.Equals(rejectReason, StringComparison.Ordinal);
             var dbgMinIntervalOk = (nowMs - _lastOcrDebugLogMs) >= 220.0;
             var dbgRotationReady = _lastOcrDebugLogMs <= 0.0 || _ocrDbgRotationAccumDeg >= 360.0;

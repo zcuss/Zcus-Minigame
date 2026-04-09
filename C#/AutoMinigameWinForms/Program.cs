@@ -27,6 +27,9 @@ internal static class Program
             }
         }
 
-        Application.Run(new MainForm(configPath, config, licenseService));
+        using var logBridge = new LogBridgeServer(AppConstants.LogBridgeApiBaseUrl);
+        logBridge.Start();
+
+        Application.Run(new MainForm(configPath, config, licenseService, logBridge));
     }
 }
