@@ -2021,14 +2021,18 @@ public sealed class MainForm : Form
         var liveRoundKeyConfirmed = !string.IsNullOrWhiteSpace(_roundKey) &&
             _roundKey.Equals(normalizedKey, StringComparison.OrdinalIgnoreCase);
         var keyEvidenceOk = liveRoundKeyConfirmed || currentRoundKeyConfirmed || (majorityRoundKeyConfirmed && !ocrRoundAccepted);
+        var directTouchFireReady = result.Overlap && edgeDiffDeg <= Math.Max(_cfg.AngleToleranceDeg + 1.0, 18.0);
         var schedulerFireReady = false;
         var opportunisticFireReady = false;
+        var directEdgeFireReady = false;
         var fallbackFireReady = false;
         var hardFallbackFireReady = false;
         var deadlineRescueFireReady = false;
-        var qualityFireOk = centerReliable
-            ? centerForTimingDiff <= (centerFireLimit + 1.8)
-            : edgeDiffDeg <= 12.0;
+        var qualityFireOk =
+            directTouchFireReady ||
+            (centerReliable
+                ? centerForTimingDiff <= (centerFireLimit + 1.8)
+                : edgeDiffDeg <= 12.0);
 
         if (centerReliable)
         {
@@ -2039,6 +2043,7 @@ public sealed class MainForm : Form
         else
         {
             schedulerFireReady = schedulerDue && edgeDiffDeg <= schedulerEdgeLimit;
+            directEdgeFireReady = edgeDiffDeg <= 11.5;
             opportunisticFireReady = opportunisticEdgeDue && edgeDiffDeg <= 10.5;
             fallbackFireReady = fallbackDue &&
                 (
@@ -2085,7 +2090,9 @@ public sealed class MainForm : Form
             qualityFireOk &&
             cooldownOk &&
             (
+                directTouchFireReady ||
                 schedulerFireReady ||
+                directEdgeFireReady ||
                 opportunisticFireReady ||
                 fallbackFireReady ||
                 hardFallbackFireReady ||
@@ -2121,7 +2128,7 @@ public sealed class MainForm : Form
                     schedulerEdgeOk ? null : "edge-far",
                     fallbackDue && !fallbackWindowReady ? "fallback-window" : null,
                     hardFallbackDue && !hardFallbackFireReady ? "hard-fallback-window" : null,
-                    schedulerFireReady || fallbackFireReady || opportunisticFireReady || hardFallbackFireReady || deadlineRescueFireReady ? null : "wait-schedule",
+                    directTouchFireReady || schedulerFireReady || directEdgeFireReady || fallbackFireReady || opportunisticFireReady || hardFallbackFireReady || deadlineRescueFireReady ? null : "wait-schedule",
                 }.Where(x => x is not null));
 
             var dbgReliable = reliableKey ?? "-";
@@ -2129,7 +2136,7 @@ public sealed class MainForm : Form
                 _lastDbgRoundId != _roundId ||
                 _lastDbgRoundState != _roundState ||
                 !_lastDbgReliableKey.Equals(dbgReliable, StringComparison.OrdinalIgnoreCase);
-            var dbgAction = canPress || schedulerFireReady || fallbackFireReady || opportunisticFireReady || hardFallbackFireReady || deadlineRescueFireReady;
+            var dbgAction = canPress || directTouchFireReady || schedulerFireReady || directEdgeFireReady || fallbackFireReady || opportunisticFireReady || hardFallbackFireReady || deadlineRescueFireReady;
             var dbgRejectChanged = !_lastDbgReject.Equals(rejectReason, StringComparison.Ordinal);
             var dbgMinIntervalOk = (nowMs - _lastOcrDebugLogMs) >= 220.0;
             var dbgRotationReady = _lastOcrDebugLogMs <= 0.0 || _ocrDbgRotationAccumDeg >= 360.0;
