@@ -1933,6 +1933,7 @@ public sealed class MainForm : Form
         var triggerDiffLimit = Math.Min(AppConstants.PressTriggerDiffDeg, strictDiffLimit);
         var centerGateLimit = Math.Max(AppConstants.PressCenterMaxDiffDeg, strictDiffLimit + 2.0);
         var centerFireLimit = Math.Min(14.0, centerGateLimit + 2.0);
+        var useStrictCenterPress = mode == "WASD";
         var isTimingOk = centerReliable
             ? centerForTimingDiff <= (centerFireLimit + 2.0)
             : edgeDiffDeg <= (triggerDiffLimit + 2.0);
@@ -2021,42 +2022,47 @@ public sealed class MainForm : Form
         var liveRoundKeyConfirmed = !string.IsNullOrWhiteSpace(_roundKey) &&
             _roundKey.Equals(normalizedKey, StringComparison.OrdinalIgnoreCase);
         var keyEvidenceOk = liveRoundKeyConfirmed || currentRoundKeyConfirmed || (majorityRoundKeyConfirmed && !ocrRoundAccepted);
-        var directTouchFireReady = result.Overlap && edgeDiffDeg <= Math.Max(_cfg.AngleToleranceDeg + 1.0, 18.0);
+        var directTouchFireReady = !useStrictCenterPress &&
+            result.Overlap &&
+            edgeDiffDeg <= Math.Max(_cfg.AngleToleranceDeg + 1.0, 18.0);
         var schedulerFireReady = false;
         var opportunisticFireReady = false;
         var directEdgeFireReady = false;
         var fallbackFireReady = false;
         var hardFallbackFireReady = false;
         var deadlineRescueFireReady = false;
-        var qualityFireOk =
-            directTouchFireReady ||
-            (centerReliable
-                ? centerForTimingDiff <= (centerFireLimit + 1.8)
-                : edgeDiffDeg <= 12.0);
+        var qualityFireOk = useStrictCenterPress
+            ? centerReliable && centerForTimingDiff <= centerFireLimit
+            : directTouchFireReady ||
+                (centerReliable
+                    ? centerForTimingDiff <= (centerFireLimit + 1.8)
+                    : edgeDiffDeg <= 12.0);
 
         if (centerReliable)
         {
             schedulerFireReady = schedulerDue && centerForTimingDiff <= centerFireLimit;
-            fallbackFireReady = fallbackDue && centerForTimingDiff <= (centerFireLimit + 1.5);
-            hardFallbackFireReady = hardFallbackDue && centerForTimingDiff <= (centerFireLimit + 3.0);
+            fallbackFireReady = fallbackDue && centerForTimingDiff <= (useStrictCenterPress ? centerFireLimit : (centerFireLimit + 1.5));
+            hardFallbackFireReady = hardFallbackDue && centerForTimingDiff <= (useStrictCenterPress ? (centerFireLimit + 0.8) : (centerFireLimit + 3.0));
         }
         else
         {
-            schedulerFireReady = schedulerDue && edgeDiffDeg <= schedulerEdgeLimit;
-            directEdgeFireReady = edgeDiffDeg <= 11.5;
-            opportunisticFireReady = opportunisticEdgeDue && edgeDiffDeg <= 10.5;
-            fallbackFireReady = fallbackDue &&
+            schedulerFireReady = !useStrictCenterPress && schedulerDue && edgeDiffDeg <= schedulerEdgeLimit;
+            directEdgeFireReady = !useStrictCenterPress && edgeDiffDeg <= 11.5;
+            opportunisticFireReady = !useStrictCenterPress && opportunisticEdgeDue && edgeDiffDeg <= 10.5;
+            fallbackFireReady = !useStrictCenterPress &&
+                fallbackDue &&
                 (
                     result.Overlap && edgeDiffDeg <= 11.5
                 );
-            hardFallbackFireReady = hardFallbackDue &&
+            hardFallbackFireReady = !useStrictCenterPress &&
+                hardFallbackDue &&
                 (
                     (result.Overlap && edgeDiffDeg <= 14.0) ||
                     (timeToCenterMs.HasValue && timeToCenterMs.Value <= 260.0 && edgeDiffDeg <= 14.5)
                 );
         }
 
-        if (hardFallbackDue && !hardFallbackFireReady)
+        if (!useStrictCenterPress && hardFallbackDue && !hardFallbackFireReady)
         {
             var roundAgeMs = nowMs - _roundStartMs;
             var deepDeadline = roundAgeMs >= (AppConstants.RoundTimeoutMs * 0.97);
