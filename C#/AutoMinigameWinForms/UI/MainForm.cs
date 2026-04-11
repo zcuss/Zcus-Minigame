@@ -1926,9 +1926,9 @@ public sealed class MainForm : Form
             !_roundFired &&
             (nowMs - _roundStartMs) >= AppConstants.RoundTimeoutMs)
         {
-            if (!string.IsNullOrWhiteSpace(_roundKey))
+            var forcedKey = !string.IsNullOrWhiteSpace(reliableKey) ? reliableKey : _roundKey;
+            if (!string.IsNullOrWhiteSpace(forcedKey))
             {
-                var forcedKey = _roundKey;
                 var forcedSent = NativeInput.PressKey(forcedKey, _targetHwnd);
                 _lastAttempt = now;
                 if (forcedSent)
@@ -2124,14 +2124,21 @@ public sealed class MainForm : Form
             ocrRoundAccepted &&
             (liveRoundKeyConfirmed || currentRoundKeyConfirmed || majorityRoundKeyConfirmed);
         ocrGateForPress = ocrGateForPress || wasdRelaxedOcrGateOk;
+        var wasdNoSkipGateBypass = useStrictCenterPress &&
+            !string.IsNullOrWhiteSpace(keyToPress) &&
+            canFireRound &&
+            cooldownOk &&
+            qualityFireOk;
+        var keyEvidenceGateOk = keyEvidenceForPress || wasdNoSkipGateBypass;
+        var ocrGateFinalOk = ocrGateForPress || wasdNoSkipGateBypass;
 
         var canPressNormal =
             AppConstants.AutoPressOnOverlap &&
             canFireRound &&
             !string.IsNullOrWhiteSpace(keyToPress) &&
-            keyEvidenceForPress &&
+            keyEvidenceGateOk &&
             isFreshOcrForPress &&
-            ocrGateForPress &&
+            ocrGateFinalOk &&
             qualityFireOk &&
             cooldownOk &&
             (
