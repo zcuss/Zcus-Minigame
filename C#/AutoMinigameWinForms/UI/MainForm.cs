@@ -110,7 +110,7 @@ public sealed class MainForm : Form
     private bool _hotkeyRegistered;
     private bool _toggleBusy;
     private bool _isRuntimeRevalidating;
-    private bool _debugAllLogs = true;
+    private bool _debugAllLogs;
     private double _ocrMinScore = AppConstants.OcrMinScore;
     private double _ocrMinMargin = AppConstants.OcrMinMargin;
 
@@ -1560,7 +1560,7 @@ public sealed class MainForm : Form
             return;
         }
 
-        cfg.DebugAllLogs = true;
+        cfg.DebugAllLogs = false;
         cfg.CaptureWidth = Math.Max(cfg.CaptureWidth, AppConstants.LiveProfileCaptureMinSize);
         cfg.CaptureHeight = Math.Max(cfg.CaptureHeight, AppConstants.LiveProfileCaptureMinSize);
         cfg.OcrBoxW = Math.Max(cfg.OcrBoxW, AppConstants.LiveProfileOcrBoxMinSize);
@@ -1889,7 +1889,7 @@ public sealed class MainForm : Form
             }
         }
 
-        if (result.RedAngle.HasValue)
+        if (_debugAllLogs && result.RedAngle.HasValue)
         {
             var redNow = NormalizeDeg(result.RedAngle.Value);
             if (_ocrDbgLastAngleDeg.HasValue)
@@ -1930,15 +1930,10 @@ public sealed class MainForm : Form
         }
 
         var strictDiffLimit = Math.Min(AppConstants.PressStrictMaxDiffDeg, _cfg.AngleToleranceDeg * AppConstants.PressStrictTolRatio);
-        var triggerDiffLimit = Math.Min(AppConstants.PressTriggerDiffDeg, strictDiffLimit);
         var centerGateLimit = Math.Max(AppConstants.PressCenterMaxDiffDeg, strictDiffLimit + 2.0);
         var centerFireLimit = Math.Min(14.0, centerGateLimit + 2.0);
         var useStrictCenterPress = mode == "WASD";
         var wasdCenterFireLimit = useStrictCenterPress ? Math.Min(centerFireLimit, 8.6) : centerFireLimit;
-        var isTimingOk = centerReliable
-            ? centerForTimingDiff <= (wasdCenterFireLimit + 2.0)
-            : edgeDiffDeg <= (triggerDiffLimit + 2.0);
-        var isCenterOk = !centerReliable || centerForTimingDiff <= wasdCenterFireLimit;
 
         var signedToCenterDeg = (double?)null;
         if (result.RedAngle.HasValue && centerReliable)
@@ -1996,17 +1991,11 @@ public sealed class MainForm : Form
             && !_roundFallbackFired
             && nowMs >= hardFallbackDeadlineMs;
         var schedulerEdgeLimit = 12.0;
-        var schedulerEdgeOk = edgeDiffDeg <= schedulerEdgeLimit;
         var opportunisticEdgeLimit = 12.0;
         var opportunisticEdgeDue = result.Overlap &&
             !schedulerDue &&
             !timeToCenterMs.HasValue &&
             edgeDiffDeg <= opportunisticEdgeLimit;
-        var fallbackWindowDiffLimit = Math.Max(22.0, triggerDiffLimit + 12.0);
-        var fallbackWindowReady =
-            result.Overlap ||
-            edgeDiffDeg <= fallbackWindowDiffLimit ||
-            (timeToCenterMs.HasValue && timeToCenterMs.Value <= 220.0);
 
         var cooldownOk = _pressArmed &&
             (now - _lastAttempt) >= AppConstants.AttemptIntervalSec &&
@@ -2095,13 +2084,21 @@ public sealed class MainForm : Form
             (fallbackDue || hardFallbackDue) &&
             !string.IsNullOrWhiteSpace(majorityKey) &&
             _roundKey.Equals(majorityKey, StringComparison.OrdinalIgnoreCase);
-        var keyEvidenceForPress = keyEvidenceOk || fallbackKeyEvidenceOk;
+        var wasdLockedKeyEvidenceOk = useStrictCenterPress &&
+            roundLockedForPress &&
+            (liveRoundKeyConfirmed || currentRoundKeyConfirmed || majorityRoundKeyConfirmed);
+        var keyEvidenceForPress = keyEvidenceOk || fallbackKeyEvidenceOk || wasdLockedKeyEvidenceOk;
         var ocrGateForPress = ocrFireAccepted ||
             (fallbackKeyEvidenceOk &&
                 scoreOk &&
                 marginOk &&
                 keyStable &&
                 !ocr.IsAmbiguous);
+        var wasdRelaxedOcrGateOk = useStrictCenterPress &&
+            roundLockedForPress &&
+            ocrRoundAccepted &&
+            (liveRoundKeyConfirmed || currentRoundKeyConfirmed || majorityRoundKeyConfirmed);
+        ocrGateForPress = ocrGateForPress || wasdRelaxedOcrGateOk;
 
         var canPressNormal =
             AppConstants.AutoPressOnOverlap &&
@@ -2123,8 +2120,6 @@ public sealed class MainForm : Form
             );
         var canPress = canPressNormal;
         var fallbackFireNow = canPress && (fallbackDue || hardFallbackDue || deadlineRescueFireReady);
-        var sinceLastPressMs = _lastPressMs > 0 ? (nowMs - _lastPressMs) : -1.0;
-
         var redAngleText = result.RedAngle.HasValue ? result.RedAngle.Value.ToString("0.0") : "-";
         var diffText = result.BestDiff.HasValue ? result.BestDiff.Value.ToString("0.0") : "-";
         var centerDiffText = hasCenterDiff ? centerDiffDeg.ToString("0.0") : "-";
@@ -2134,6 +2129,13 @@ public sealed class MainForm : Form
 
         if (_debugAllLogs)
         {
+            var schedulerEdgeOk = edgeDiffDeg <= schedulerEdgeLimit;
+            var triggerDiffLimit = Math.Min(AppConstants.PressTriggerDiffDeg, strictDiffLimit);
+            var fallbackWindowDiffLimit = Math.Max(22.0, triggerDiffLimit + 12.0);
+            var fallbackWindowReady =
+                result.Overlap ||
+                edgeDiffDeg <= fallbackWindowDiffLimit ||
+                (timeToCenterMs.HasValue && timeToCenterMs.Value <= 220.0);
             var rejectReason = string.Join(',',
                 new[]
                 {
