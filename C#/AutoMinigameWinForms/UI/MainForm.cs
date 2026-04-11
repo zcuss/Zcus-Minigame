@@ -2006,6 +2006,11 @@ public sealed class MainForm : Form
             result.Overlap ||
             edgeDiffDeg <= fallbackWindowDiffLimit ||
             (timeToCenterMs.HasValue && timeToCenterMs.Value <= 220.0);
+        var roundAgeMs = nowMs - _roundStartMs;
+        var forcePressDue = useStrictCenterPress &&
+            _roundState is RoundState.Armed or RoundState.Candidate &&
+            !_roundFallbackFired &&
+            roundAgeMs >= (AppConstants.RoundTimeoutMs * 0.72);
 
         var cooldownOk = _pressArmed &&
             (now - _lastAttempt) >= AppConstants.AttemptIntervalSec &&
@@ -2076,8 +2081,8 @@ public sealed class MainForm : Form
 
         if (!useStrictCenterPress && hardFallbackDue && !hardFallbackFireReady)
         {
-            var roundAgeMs = nowMs - _roundStartMs;
-            var deepDeadline = roundAgeMs >= (AppConstants.RoundTimeoutMs * 0.97);
+            var deepRoundAgeMs = nowMs - _roundStartMs;
+            var deepDeadline = deepRoundAgeMs >= (AppConstants.RoundTimeoutMs * 0.97);
             var hasTimingSignal =
                 (result.Overlap && edgeDiffDeg <= 12.0) ||
                 (timeToCenterMs.HasValue && timeToCenterMs.Value <= 180.0);
@@ -2098,7 +2103,7 @@ public sealed class MainForm : Form
                 keyStable &&
                 !ocr.IsAmbiguous);
 
-        var canPress =
+        var canPressNormal =
             AppConstants.AutoPressOnOverlap &&
             canFireRound &&
             !string.IsNullOrWhiteSpace(keyToPress) &&
@@ -2116,7 +2121,13 @@ public sealed class MainForm : Form
                 hardFallbackFireReady ||
                 deadlineRescueFireReady
             );
-        var fallbackFireNow = canPress && (fallbackDue || hardFallbackDue || deadlineRescueFireReady);
+        var canForcePress = AppConstants.AutoPressOnOverlap &&
+            canFireRound &&
+            !string.IsNullOrWhiteSpace(_roundKey) &&
+            cooldownOk &&
+            forcePressDue;
+        var canPress = canPressNormal || canForcePress;
+        var fallbackFireNow = canPress && (canForcePress || fallbackDue || hardFallbackDue || deadlineRescueFireReady);
         var sinceLastPressMs = _lastPressMs > 0 ? (nowMs - _lastPressMs) : -1.0;
 
         var redAngleText = result.RedAngle.HasValue ? result.RedAngle.Value.ToString("0.0") : "-";
@@ -2161,7 +2172,7 @@ public sealed class MainForm : Form
             if (dbgMinIntervalOk && dbgRotationReady && (dbgStateChanged || dbgAction || dbgRejectChanged))
             {
                 AppendLog(
-                    $"OCR dbg | mode={mode} | key={(key ?? "-").ToUpperInvariant()} | press={(canPress ? (fallbackFireNow ? "fallback" : "scheduled") : "-")}");
+                    $"OCR dbg | mode={mode} | key={(key ?? "-").ToUpperInvariant()} | press={(canPress ? (canForcePress ? "force" : (fallbackFireNow ? "fallback" : "scheduled")) : "-")}");
                 _lastOcrDebugLogMs = nowMs;
                 _ocrDbgRotationAccumDeg = 0.0;
                 _lastDbgRoundId = _roundId;
