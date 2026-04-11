@@ -1926,7 +1926,32 @@ public sealed class MainForm : Form
             !_roundFired &&
             (nowMs - _roundStartMs) >= AppConstants.RoundTimeoutMs)
         {
-            CloseRoundAsTimeout(nowMs, waitForReset: true);
+            if (!string.IsNullOrWhiteSpace(_roundKey))
+            {
+                var forcedKey = _roundKey;
+                var forcedSent = NativeInput.PressKey(forcedKey, _targetHwnd);
+                _lastAttempt = now;
+                if (forcedSent)
+                {
+                    _lastPress = now;
+                    _lastPressMs = nowMs;
+                    _pressArmed = false;
+                    _lastPressedKey = forcedKey;
+                    _lastValidOcrMs = 0;
+                    _hit++;
+                    AppendLog($"[{DateTime.Now:HH:mm:ss}] CLICK {forcedKey.ToUpperInvariant()} | total={_hit} score={score:0.000} diff={result.BestDiff.GetValueOrDefault(999.0):0.0} eff={effectiveDiffDeg:0.0} state={_roundState} fb=Y deadline=Y");
+                    CloseRoundAsFired(effectiveDiffDeg, fallbackFired: true, nowMs);
+                    RefreshSummary();
+                }
+                else
+                {
+                    CloseRoundAsTimeout(nowMs, waitForReset: true);
+                }
+            }
+            else
+            {
+                CloseRoundAsTimeout(nowMs, waitForReset: true);
+            }
         }
 
         var strictDiffLimit = Math.Min(AppConstants.PressStrictMaxDiffDeg, _cfg.AngleToleranceDeg * AppConstants.PressStrictTolRatio);
@@ -2027,7 +2052,7 @@ public sealed class MainForm : Form
         {
             schedulerFireReady = schedulerDue && centerForTimingDiff <= wasdCenterFireLimit;
             directEdgeFireReady = useStrictCenterPress
-                ? result.Overlap && centerForTimingDiff <= (wasdCenterFireLimit - 1.0)
+                ? result.Overlap && centerForTimingDiff <= wasdCenterFireLimit
                 : directEdgeFireReady;
             fallbackFireReady = fallbackDue && centerForTimingDiff <= (useStrictCenterPress ? wasdCenterFireLimit : (centerFireLimit + 1.5));
             hardFallbackFireReady = hardFallbackDue && centerForTimingDiff <= (useStrictCenterPress ? (wasdCenterFireLimit + 0.5) : (centerFireLimit + 3.0));
@@ -2037,9 +2062,9 @@ public sealed class MainForm : Form
             if (useStrictCenterPress)
             {
                 // WASD rescue: saat center tidak reliable, tetap tunggu overlap + edge sangat dekat.
-                directEdgeFireReady = result.Overlap && edgeDiffDeg <= 4.8;
-                fallbackFireReady = false;
-                hardFallbackFireReady = hardFallbackDue && result.Overlap && edgeDiffDeg <= 6.8;
+                directEdgeFireReady = result.Overlap && edgeDiffDeg <= 6.2;
+                fallbackFireReady = fallbackDue && result.Overlap && edgeDiffDeg <= 7.8;
+                hardFallbackFireReady = hardFallbackDue && result.Overlap && edgeDiffDeg <= 9.2;
                 strictCenterFallbackReady = fallbackFireReady || hardFallbackFireReady;
             }
             else
