@@ -2037,6 +2037,9 @@ public sealed class MainForm : Form
         if (centerReliable)
         {
             schedulerFireReady = schedulerDue && centerForTimingDiff <= wasdCenterFireLimit;
+            directEdgeFireReady = useStrictCenterPress
+                ? result.Overlap && centerForTimingDiff <= (wasdCenterFireLimit - 1.0)
+                : directEdgeFireReady;
             fallbackFireReady = fallbackDue && centerForTimingDiff <= (useStrictCenterPress ? wasdCenterFireLimit : (centerFireLimit + 1.5));
             hardFallbackFireReady = hardFallbackDue && centerForTimingDiff <= (useStrictCenterPress ? (wasdCenterFireLimit + 0.5) : (centerFireLimit + 3.0));
         }
@@ -2045,6 +2048,7 @@ public sealed class MainForm : Form
             if (useStrictCenterPress)
             {
                 // WASD rescue: saat center tidak reliable, tetap tunggu overlap + edge sangat dekat.
+                directEdgeFireReady = result.Overlap && edgeDiffDeg <= 4.8;
                 fallbackFireReady = false;
                 hardFallbackFireReady = hardFallbackDue && result.Overlap && edgeDiffDeg <= 6.8;
                 strictCenterFallbackReady = fallbackFireReady || hardFallbackFireReady;
@@ -2069,7 +2073,7 @@ public sealed class MainForm : Form
         }
 
         var qualityFireOk = useStrictCenterPress
-            ? (centerReliable && centerForTimingDiff <= wasdCenterFireLimit) || strictCenterFallbackReady
+            ? directEdgeFireReady || ((centerReliable && centerForTimingDiff <= wasdCenterFireLimit) || strictCenterFallbackReady)
             : directTouchFireReady ||
                 (centerReliable
                     ? centerForTimingDiff <= (centerFireLimit + 1.8)
