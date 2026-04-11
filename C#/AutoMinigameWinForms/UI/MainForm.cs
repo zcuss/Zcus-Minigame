@@ -2031,12 +2031,7 @@ public sealed class MainForm : Form
         var fallbackFireReady = false;
         var hardFallbackFireReady = false;
         var deadlineRescueFireReady = false;
-        var qualityFireOk = useStrictCenterPress
-            ? centerReliable && centerForTimingDiff <= centerFireLimit
-            : directTouchFireReady ||
-                (centerReliable
-                    ? centerForTimingDiff <= (centerFireLimit + 1.8)
-                    : edgeDiffDeg <= 12.0);
+        var strictCenterFallbackReady = false;
 
         if (centerReliable)
         {
@@ -2046,21 +2041,38 @@ public sealed class MainForm : Form
         }
         else
         {
-            schedulerFireReady = !useStrictCenterPress && schedulerDue && edgeDiffDeg <= schedulerEdgeLimit;
-            directEdgeFireReady = !useStrictCenterPress && edgeDiffDeg <= 11.5;
-            opportunisticFireReady = !useStrictCenterPress && opportunisticEdgeDue && edgeDiffDeg <= 10.5;
-            fallbackFireReady = !useStrictCenterPress &&
-                fallbackDue &&
-                (
-                    result.Overlap && edgeDiffDeg <= 11.5
-                );
-            hardFallbackFireReady = !useStrictCenterPress &&
-                hardFallbackDue &&
-                (
-                    (result.Overlap && edgeDiffDeg <= 14.0) ||
-                    (timeToCenterMs.HasValue && timeToCenterMs.Value <= 260.0 && edgeDiffDeg <= 14.5)
-                );
+            if (useStrictCenterPress)
+            {
+                // WASD rescue: center estimator kadang drop, tapi overlap/edge tetap valid menjelang timeout.
+                fallbackFireReady = fallbackDue && result.Overlap && edgeDiffDeg <= 10.8;
+                hardFallbackFireReady = hardFallbackDue && result.Overlap && edgeDiffDeg <= 12.5;
+                strictCenterFallbackReady = fallbackFireReady || hardFallbackFireReady;
+            }
+            else
+            {
+                schedulerFireReady = schedulerDue && edgeDiffDeg <= schedulerEdgeLimit;
+                directEdgeFireReady = edgeDiffDeg <= 11.5;
+                opportunisticFireReady = opportunisticEdgeDue && edgeDiffDeg <= 10.5;
+                fallbackFireReady =
+                    fallbackDue &&
+                    (
+                        result.Overlap && edgeDiffDeg <= 11.5
+                    );
+                hardFallbackFireReady =
+                    hardFallbackDue &&
+                    (
+                        (result.Overlap && edgeDiffDeg <= 14.0) ||
+                        (timeToCenterMs.HasValue && timeToCenterMs.Value <= 260.0 && edgeDiffDeg <= 14.5)
+                    );
+            }
         }
+
+        var qualityFireOk = useStrictCenterPress
+            ? (centerReliable && centerForTimingDiff <= centerFireLimit) || strictCenterFallbackReady
+            : directTouchFireReady ||
+                (centerReliable
+                    ? centerForTimingDiff <= (centerFireLimit + 1.8)
+                    : edgeDiffDeg <= 12.0);
 
         if (!useStrictCenterPress && hardFallbackDue && !hardFallbackFireReady)
         {
@@ -2161,18 +2173,25 @@ public sealed class MainForm : Form
 
         if (canPress && !string.IsNullOrWhiteSpace(keyToPress))
         {
-            NativeInput.PressKey(keyToPress);
-            _lastPress = now;
+            var inputSent = NativeInput.PressKey(keyToPress, _targetHwnd);
             _lastAttempt = now;
-            _lastPressMs = nowMs;
-            _pressArmed = false;
-            _lastPressedKey = keyToPress;
-            _lastValidOcrMs = 0;
+            if (inputSent)
+            {
+                _lastPress = now;
+                _lastPressMs = nowMs;
+                _pressArmed = false;
+                _lastPressedKey = keyToPress;
+                _lastValidOcrMs = 0;
 
-            _hit++;
-            AppendLog($"[{DateTime.Now:HH:mm:ss}] CLICK {keyToPress.ToUpperInvariant()} | total={_hit} score={score:0.000} diff={diffText} eff={effectiveDiffDeg:0.0} state={_roundState} {(fallbackFireNow ? "fb=Y" : "fb=N")}");
-            CloseRoundAsFired(effectiveDiffDeg, fallbackFireNow, nowMs);
-            RefreshSummary();
+                _hit++;
+                AppendLog($"[{DateTime.Now:HH:mm:ss}] CLICK {keyToPress.ToUpperInvariant()} | total={_hit} score={score:0.000} diff={diffText} eff={effectiveDiffDeg:0.0} state={_roundState} {(fallbackFireNow ? "fb=Y" : "fb=N")}");
+                CloseRoundAsFired(effectiveDiffDeg, fallbackFireNow, nowMs);
+                RefreshSummary();
+            }
+            else
+            {
+                AppendLog($"[{DateTime.Now:HH:mm:ss}] WARN key-send failed key={keyToPress.ToUpperInvariant()}");
+            }
         }
 
         if (result.BestDiff.HasValue)
