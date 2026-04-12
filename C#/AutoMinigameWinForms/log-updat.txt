@@ -69,6 +69,21 @@ Perubahan:
 Tujuan:
 - Mengurangi trigger terlalu cepat beberapa pixel (fire lebih dekat ke center target).
 
+[2026-04-12 09:37] Analisis log tester (user sample)
+Data yang diambil:
+- total MISS dengan offset terukur: 49
+- rata-rata MISS offset: 24.00°
+- perkiraan p95 MISS offset: 29.74°
+- pola: banyak press dengan key benar, tapi offset besar (16°-37°), artinya trigger terlalu agresif / terlalu jauh dari center.
+
+Tindak lanjut berbasis data (hindari ngulang tuning buta):
+- Kurangi trigger WASD saat center tidak reliable:
+  direct edge fire dimatikan untuk non-deadline path.
+- Deadline rescue WASD dibuat lebih ketat:
+  aktif hanya saat hard fallback window + edge limit dipersempit.
+- Target iterasi berikutnya:
+  turunkan rata-rata MISS offset mendekati <= 14°.
+
 ==================================================
 DO NOT REPEAT (ANTI MUTER)
 ==================================================

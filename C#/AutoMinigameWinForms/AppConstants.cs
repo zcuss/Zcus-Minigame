@@ -39,7 +39,7 @@ public static class AppConstants
     public const double WasdEdgeFallbackNoCenterMaxDiffDeg = 10.8;
     public const double WasdEdgeHardFallbackNoCenterMaxDiffDeg = 12.8;
     public const double WasdCenterHardFallbackExtraDeg = 1.2;
-    public const double WasdDeadlineRescueEdgeMaxDiffDeg = 14.5;
+    public const double WasdDeadlineRescueEdgeMaxDiffDeg = 11.8;
     public const double WasdRoundSwitchWindowMs = 300.0;
 
     public const int LiveProfileCaptureMinSize = 160;

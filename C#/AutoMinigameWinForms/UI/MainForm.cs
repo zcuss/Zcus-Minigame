@@ -2092,10 +2092,7 @@ public sealed class MainForm : Form
             {
                 directEdgeFireReady =
                     result.Overlap &&
-                    (
-                        centerForTimingDiff <= wasdCenterFireLimit ||
-                        edgeDiffDeg <= AppConstants.WasdEdgeDirectNoCenterMaxDiffDeg
-                    );
+                    centerForTimingDiff <= wasdCenterFireLimit;
                 fallbackFireReady =
                     fallbackDue &&
                     result.Overlap &&
@@ -2123,7 +2120,7 @@ public sealed class MainForm : Form
             if (useStrictCenterPress)
             {
                 // WASD rescue: saat center tidak reliable, tetap tunggu overlap + edge sangat dekat.
-                directEdgeFireReady = result.Overlap && edgeDiffDeg <= AppConstants.WasdEdgeDirectNoCenterMaxDiffDeg;
+                directEdgeFireReady = false;
                 fallbackFireReady = fallbackDue && result.Overlap && edgeDiffDeg <= AppConstants.WasdEdgeFallbackNoCenterMaxDiffDeg;
                 hardFallbackFireReady = hardFallbackDue && result.Overlap && edgeDiffDeg <= AppConstants.WasdEdgeHardFallbackNoCenterMaxDiffDeg;
                 strictCenterFallbackReady = fallbackFireReady || hardFallbackFireReady;
@@ -2165,7 +2162,7 @@ public sealed class MainForm : Form
             deadlineRescueFireReady = deepDeadline && hasTimingSignal;
         }
 
-        if (useStrictCenterPress && (fallbackDue || hardFallbackDue))
+        if (useStrictCenterPress && hardFallbackDue)
         {
             wasdDeadlineRescueFireReady =
                 result.Overlap &&
