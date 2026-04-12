@@ -61,6 +61,7 @@ public static class AppConstants
     public const int OcrTemplateSize = 32;
     public const double OcrMinScore = 0.08;
     public const double OcrMinMargin = 0.00;
+    public const int BlueHitPaddingPxDefault = 2;
     public const int OcrCrosshairMaskRadius = 1;
     public const int OcrNeedleMaskRadius = 10;
     public const string OcrModeDefault = "WASD";
@@ -121,6 +122,7 @@ public static class AppConstants
             BlueStepDeg = 5.0,
             BlueRSamples = 52,
             BlueNeighbor = 3,
+            BlueHitPaddingPx = BlueHitPaddingPxDefault,
             Red1Lower = [0, 140, 110],
             Red1Upper = [6, 255, 255],
             Red2Lower = [174, 140, 110],

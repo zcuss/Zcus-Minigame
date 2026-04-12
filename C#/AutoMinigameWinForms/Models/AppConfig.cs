@@ -16,6 +16,7 @@ public sealed class AppConfig
     public int OcrMinScoreX100 { get; set; } = (int)Math.Round(AppConstants.OcrMinScore * 100.0);
     public int OcrMinMarginX100 { get; set; } = (int)Math.Round(AppConstants.OcrMinMargin * 100.0);
     public int AngleToleranceX10 { get; set; } = (int)(14.5 * 10.0);
+    public int BlueHitPaddingPx { get; set; } = AppConstants.BlueHitPaddingPxDefault;
     public string OcrMode { get; set; } = AppConstants.OcrModeDefault;
     public int MiniX { get; set; } = AppConstants.MiniGuiX;
     public int MiniY { get; set; } = AppConstants.MiniGuiY;

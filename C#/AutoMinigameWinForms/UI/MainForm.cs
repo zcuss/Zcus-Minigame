@@ -66,7 +66,7 @@ public sealed class MainForm : Form
     private double _lastPressMs;
     private nint? _targetHwnd;
     private Rectangle? _cachedRegion;
-    private (int capX, int capY, int capW, int capH, int scanX, int scanY, int tolX10)? _lastCfgTuple;
+    private (int capX, int capY, int capW, int capH, int scanX, int scanY, int tolX10, int bluePadPx)? _lastCfgTuple;
     private (int miniX, int miniY, int miniW, int miniH)? _miniLastTuple;
     private string _lastWindowTitle = string.Empty;
     private bool _usingFallbackRegion;
@@ -136,6 +136,7 @@ public sealed class MainForm : Form
     private NumericUpDown _spOcrScore = null!;
     private NumericUpDown _spOcrMargin = null!;
     private NumericUpDown _spTol = null!;
+    private NumericUpDown _spBluePad = null!;
     private ComboBox _cbMode = null!;
     private NumericUpDown _spMiniX = null!;
     private NumericUpDown _spMiniY = null!;
@@ -257,6 +258,7 @@ public sealed class MainForm : Form
         _spOcrScore = NewSpin(0, 100, (int)Math.Round(AppConstants.OcrMinScore * 100.0));
         _spOcrMargin = NewSpin(0, 100, (int)Math.Round(AppConstants.OcrMinMargin * 100.0));
         _spTol = NewSpin(5, 400, (int)(_cfg.AngleToleranceDeg * 10));
+        _spBluePad = NewSpin(0, 24, _cfg.BlueHitPaddingPx);
 
         _cbMode = new ComboBox
         {
@@ -365,6 +367,7 @@ public sealed class MainForm : Form
         StyleSpin(_spOcrScore);
         StyleSpin(_spOcrMargin);
         StyleSpin(_spTol);
+        StyleSpin(_spBluePad);
         StyleSpin(_spMiniX);
         StyleSpin(_spMiniY);
         StyleSpin(_spMiniW);
@@ -403,7 +406,7 @@ public sealed class MainForm : Form
         ]), 0, 0);
 
         settingsGrid.Controls.Add(CreateSettingsGroup("Scan", [
-            ("SCAN X", _spScanX), ("SCAN Y", _spScanY), ("Tol x10", _spTol), ("Mode", _cbMode), ("Debug", _cbDebugLogs), ("Keybind", _tbHotkey)
+            ("SCAN X", _spScanX), ("SCAN Y", _spScanY), ("Tol x10", _spTol), ("Blue Pad", _spBluePad), ("Mode", _cbMode), ("Debug", _cbDebugLogs), ("Keybind", _tbHotkey)
         ]), 1, 0);
 
         settingsGrid.Controls.Add(CreateSettingsGroup("OCR", [
@@ -1395,7 +1398,8 @@ public sealed class MainForm : Form
             (int)_spCapH.Value,
             (int)_spScanX.Value,
             (int)_spScanY.Value,
-            (int)_spTol.Value
+            (int)_spTol.Value,
+            (int)_spBluePad.Value
         );
 
         if (_lastCfgTuple != cfgTuple)
@@ -1409,6 +1413,7 @@ public sealed class MainForm : Form
             _cfg.ScanCenterOffsetX = cfgTuple.Item5;
             _cfg.ScanCenterOffsetY = cfgTuple.Item6;
             _cfg.AngleToleranceDeg = cfgTuple.Item7 / 10.0;
+            _cfg.BlueHitPaddingPx = Math.Max(0, cfgTuple.Item8);
             _cachedRegion = null;
         }
 
@@ -1463,6 +1468,7 @@ public sealed class MainForm : Form
             OcrMinScoreX100 = (int)_spOcrScore.Value,
             OcrMinMarginX100 = (int)_spOcrMargin.Value,
             AngleToleranceX10 = (int)_spTol.Value,
+            BlueHitPaddingPx = (int)_spBluePad.Value,
             OcrMode = (_cbMode.SelectedItem?.ToString() ?? AppConstants.OcrModeDefault).Trim(),
             MiniX = (int)_spMiniX.Value,
             MiniY = (int)_spMiniY.Value,
@@ -1498,6 +1504,7 @@ public sealed class MainForm : Form
         SetSpin(_spOcrScore, cfg.OcrMinScoreX100);
         SetSpin(_spOcrMargin, cfg.OcrMinMarginX100);
         SetSpin(_spTol, cfg.AngleToleranceX10);
+        SetSpin(_spBluePad, cfg.BlueHitPaddingPx);
 
         var mode = string.IsNullOrWhiteSpace(cfg.OcrMode) ? AppConstants.OcrModeDefault : cfg.OcrMode.ToUpperInvariant();
         if (mode is "AUTO" or "WASD" or "1234")
@@ -1554,6 +1561,7 @@ public sealed class MainForm : Form
         _runtimeConfig.FallbackDeadlineRatio = _fallbackDeadlineRatioRuntime;
         _runtimeConfig.OcrMajorityWindow = _ocrMajorityWindowRuntime;
         _runtimeConfig.OcrFireMinMarginX100 = (int)Math.Round(_ocrFireMinMarginRuntime * 100.0);
+        _runtimeConfig.BlueHitPaddingPx = Math.Clamp(cfg.BlueHitPaddingPx, 0, 24);
         RefreshLicenseInfo();
     }
 
@@ -1575,6 +1583,7 @@ public sealed class MainForm : Form
             cfg.FallbackDeadlineRatio = cfg.FallbackDeadlineRatio <= 0 ? AppConstants.LiveProfileFallbackDeadlineRatio : cfg.FallbackDeadlineRatio;
             cfg.OcrMajorityWindow = cfg.OcrMajorityWindow <= 0 ? AppConstants.LiveProfileOcrMajorityWindow : cfg.OcrMajorityWindow;
             cfg.OcrFireMinMarginX100 = cfg.OcrFireMinMarginX100 <= 0 ? AppConstants.LiveProfileOcrFireMinMarginX100 : cfg.OcrFireMinMarginX100;
+            cfg.BlueHitPaddingPx = Math.Clamp(cfg.BlueHitPaddingPx, 0, 24);
             return;
         }
 
@@ -1587,6 +1596,7 @@ public sealed class MainForm : Form
         cfg.OcrMinMarginX100 = cfg.OcrMinMarginX100 <= 0
             ? AppConstants.LiveProfileOcrMinMarginX100
             : Math.Min(cfg.OcrMinMarginX100, AppConstants.LiveProfileOcrMinMarginX100);
+        cfg.BlueHitPaddingPx = Math.Clamp(cfg.BlueHitPaddingPx, 0, 24);
 
         cfg.PressLatencyMs = AppConstants.LiveProfilePressLatencyMs;
         cfg.PressLatencyAutoTune = AppConstants.LiveProfilePressLatencyAutoTune;

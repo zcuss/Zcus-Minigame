@@ -18,6 +18,7 @@ public sealed class SimpleConfig
     public double BlueRMaxRatio { get; set; } = 0.78;
     public int BlueRSamples { get; set; } = 30;
     public int BlueNeighbor { get; set; } = 1;
+    public int BlueHitPaddingPx { get; set; } = AppConstants.BlueHitPaddingPxDefault;
     public int[] Red1Lower { get; set; } = [0, 80, 70];
     public int[] Red1Upper { get; set; } = [8, 255, 255];
     public int[] Red2Lower { get; set; } = [172, 140, 120];

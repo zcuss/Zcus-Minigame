@@ -76,7 +76,8 @@ public static class MinigameDetector
         Cv2.MorphologyEx(blueMask, blueMask, MorphTypes.Close, kernel, iterations: 1);
 
         var redFiltered = KeepMaskArea(redMask, cfg.MaskMinArea, cfg.MaskMaxArea);
-        var blueFiltered = KeepMaskArea(blueMask, cfg.MaskMinArea, cfg.MaskMaxArea);
+        using var blueFilteredRaw = KeepMaskArea(blueMask, cfg.MaskMinArea, cfg.MaskMaxArea);
+        var blueFiltered = ApplyInwardPadding(blueFilteredRaw, cfg.BlueHitPaddingPx);
         redMask.Dispose();
         blueMask.Dispose();
 
@@ -149,6 +150,26 @@ public static class MinigameDetector
         }
 
         return output;
+    }
+
+    private static Mat ApplyInwardPadding(Mat mask, int paddingPx)
+    {
+        var pad = Math.Max(0, paddingPx);
+        if (pad == 0)
+        {
+            return mask.Clone();
+        }
+
+        using var kernel = Cv2.GetStructuringElement(MorphShapes.Rect, new OpenCvSharp.Size(3, 3));
+        var shrunk = mask.Clone();
+        Cv2.Erode(shrunk, shrunk, kernel, iterations: pad);
+        if (Cv2.CountNonZero(shrunk) > 0)
+        {
+            return shrunk;
+        }
+
+        shrunk.Dispose();
+        return mask.Clone();
     }
 
     private static Point? FirstRedPixel(Mat mask, Point center)

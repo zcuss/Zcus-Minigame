@@ -58,6 +58,17 @@ Status:
 - Patch sudah ditanam di AppConstants.cs + UI/MainForm.cs.
 - Build verifikasi sukses lewat output folder sementara.
 
+[2026-04-12 08:xx] v3 Blue Box Inward Padding (request user)
+Perubahan:
+- Tambah parameter baru `BlueHitPaddingPx` (default 2px) untuk mengecilkan area biru dari hasil scan.
+- Implementasi di detector: blue mask di-erode inward sesuai padding.
+- Safety: kalau hasil erode habis (kosong), fallback ke mask asli supaya tidak kehilangan deteksi total.
+- Tambah kontrol UI di grup Scan: `Blue Pad` (0..24 px).
+- Persist ke config (`AppConfig`) supaya setting tersimpan antar sesi.
+
+Tujuan:
+- Mengurangi trigger terlalu cepat beberapa pixel (fire lebih dekat ke center target).
+
 ==================================================
 DO NOT REPEAT (ANTI MUTER)
 ==================================================
@@ -80,4 +91,3 @@ NEXT ACTION BACKLOG (YANG BELUM DICOBA)
 3) Tambah adaptive threshold ringan:
    - jika timeout streak tinggi, longgarkan rescue edge bertahap dalam sesi.
 4) Pisahkan tuning WASD vs 1234 total (jangan campur gate behavior).
-
