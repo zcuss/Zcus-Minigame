@@ -84,6 +84,24 @@ Tindak lanjut berbasis data (hindari ngulang tuning buta):
 - Target iterasi berikutnya:
   turunkan rata-rata MISS offset mendekati <= 14°.
 
+[2026-04-12 10:xx] Retune anti-overfire (user report: "jarum merah belum kena strip biru")
+Masalah:
+- Bot masih kirim key terlalu cepat; offset MISS tetap tinggi (sekitar 20°-30°).
+
+Perubahan lanjutan (lebih konservatif, anti-cepat):
+- `WasdCenterFireMaxDiffDeg` diturunkan ke 7.8.
+- Fallback/hard fallback tanpa center dibuat lebih ketat (`8.6` / `10.2`).
+- Center hard fallback extra diturunkan ke `0.6`.
+- Deadline rescue edge diturunkan ke `9.4`.
+- Saat center reliable:
+  fallback/hard fallback tidak lagi pakai OR edge, hanya pakai center diff.
+- WASD deadline rescue:
+  - center reliable: harus center diff dekat.
+  - center unreliable: wajib edge ketat + signal `timeToCenter` <= 140ms.
+
+Catatan:
+- Ini sengaja mengurangi agresivitas trigger supaya press nunggu lebih dekat ke strip biru.
+
 ==================================================
 DO NOT REPEAT (ANTI MUTER)
 ==================================================
@@ -106,3 +124,215 @@ NEXT ACTION BACKLOG (YANG BELUM DICOBA)
 3) Tambah adaptive threshold ringan:
    - jika timeout streak tinggi, longgarkan rescue edge bertahap dalam sesi.
 4) Pisahkan tuning WASD vs 1234 total (jangan campur gate behavior).
+
+[2026-04-12 09:50] Build Release Single EXE (license ON)
+Perubahan build:
+- `AppConstants` dibuat conditional compile:
+  DEBUG => bypass license ON, auto-start ON
+  RELEASE => bypass license OFF, auto-start OFF
+- Publish release single-file:
+  `dotnet publish -c Release -r win-x64 -p:AutoPushOnBuild=false -o .publish\\win-x64-license`
+
+Artifact:
+- `.publish\\win-x64-license\\ZcusMinigame.exe`
+
+[2026-04-12 11:xx] v4 WASD contact-only fire (must hit blue)
+Masalah:
+- Trigger masih terasa terlalu cepat karena gate WASD masih bisa lolos dari kondisi near-blue (berbasis diff/overlap) tanpa kontak pixel merah-biru.
+
+Perubahan inti:
+- Tambah evidence kontak di detector:
+  - `DetectionResult.TouchPixels`
+  - `DetectionResult.Touching`
+  - dihitung dari `BitwiseAnd(redFiltered, blueFiltered)`.
+- Tambah konstanta baru `AppConstants.WasdTouchMinPixels` (default 1).
+- WASD sekarang wajib contact (`touchPixels >= WasdTouchMinPixels`) untuk jalur fire:
+  - scheduler fire
+  - direct fire
+  - fallback fire
+  - hard fallback fire
+  - deadline rescue fire
+  - WASD fallback OCR bypass
+- Forced timeout di WASD tidak lagi auto-send key kalau belum contact; round ditutup timeout (anti early-send).
+- Tambah observability:
+  - detail label: `touch=Y/N(px)`
+  - reject reason: `no-touch`
+  - timeout log khusus: `TIMEOUT ... | no-touch ...`
+
+Dampak yang diharapkan:
+- Miss offset turun karena key tidak akan dikirim saat jarum baru dekat strip biru.
+- Tradeoff: timeout rate bisa naik jika OCR/mask belum valid di momen sentuh.
+
+Next validasi (jangan skip):
+1) Ambil sample >= 50 MISS/HIT setelah patch.
+2) Bandingkan avg/p95 MISS offset vs baseline 24.00/29.74 deg.
+3) Cek apakah press saat offset > 15 deg turun signifikan.
+
+[2026-04-12 10:10] v5 Fix no-click total setelah contact-only terlalu ketat
+Masalah dari log user:
+- Muncul `TIMEOUT ... no-touch touch=0` terus-menerus, fires=0.
+- Artinya gate WASD terlalu strict: butuh overlap pixel persis merah-biru, sementara kondisi live sering tidak overlap persis walau sudut sudah sangat dekat.
+
+Perubahan:
+- Rework deteksi touch di detector:
+  - touch dihitung terhadap `blueFilteredRaw` (sebelum inward padding), bukan mask biru yang sudah dikecilkan.
+  - tambah dilate 1px (`WasdTouchBlueDilatePx`) sebelum intersect dengan red mask agar boundary tidak drop karena aliasing.
+- Tambah soft-contact fallback khusus WASD saat hard-touch gagal:
+  - center reliable: izinkan jika center diff <= 4.8 deg.
+  - center unreliable: izinkan jika edge diff <= 6.0 deg.
+  - konstanta: `WasdNoTouchCenterFallbackMaxDiffDeg`, `WasdNoTouchEdgeFallbackMaxDiffDeg`.
+- Semua gate WASD yang tadinya wajib `wasdContactNow` sekarang pakai `wasdFireContactOk` (hard-touch OR soft-contact).
+- Detail label ditambah `softTouch=Y/N` supaya gampang lihat saat trigger lewat fallback kecil.
+
+Tujuan:
+- Balikin CLICK (jangan 0 total), tapi tetap hindari overfire jauh karena soft fallback sangat ketat.
+
+Validasi berikutnya:
+1) Pastikan `fires` tidak lagi 0.
+2) Ambil sample baru dan cek apakah MISS offset mayoritas turun dari rentang 20-30 deg.
+3) Jika masih early, turunkan `WasdNoTouch*` 0.5-1.0 deg bertahap (bukan naikin threshold random).
+
+[2026-04-12 10:20] v6 Kurangi timeout palsu + kurangi spam log timeout
+Analisa log user (10:09-10:13):
+- rounds=184, fires=8, timeoutRate=54.3%.
+- Banyak timeout dengan `diff=999` + `touch=0` -> round kebentuk saat visual needle/blue belum valid.
+- Ini bukan murni "telat pencet"; ini banyak "round start palsu".
+
+Perubahan:
+- Tambah guard start round khusus WASD:
+  - round baru hanya boleh start kalau visual sudah kebaca (`RedAngle` ada, `BestDiff` ada, dan diff <= 45 deg).
+  - konstanta: `WasdRoundStartMaxDiffDeg`.
+- Baris log `TIMEOUT ... no-touch` dijadikan debug-only (`_debugAllLogs`) supaya log normal tidak kebanjiran timeout detail.
+  - Counter timeout internal tetap jalan untuk metrik session.
+
+Tujuan:
+- Turunkan round palsu (yang sebelumnya otomatis timeout).
+- Log normal lebih bersih: fokus ke CLICK/session summary.
+
+Validasi setelah patch:
+1) Jalankan 1-2 menit, lihat apakah rasio rounds terhadap fires membaik (round tidak melonjak liar).
+2) Cek session summary timeoutRate dibsanding run sebelumnya 54.3%.
+3) Kalau masih banyak no-click, tune `WasdRoundStartMaxDiffDeg` turun bertahap (45 -> 35) bila start masih terlalu longgar.
+
+[2026-04-12 10:35] v7 UI settings layout + persistence fix
+Perubahan UI layout:
+- Re-layout panel setting jadi 4 grup jelas (General/Capture/Scan/OCR), tidak lagi OCR span full row.
+- `General` sekarang menampung semua control runtime yang sebelumnya kepisah/kurang terlihat:
+  TARGET, MODE, DEBUG, TOPMOST, HOTKEY MOD, HOTKEY KEY, KEYBIND.
+- Action bar difokuskan ke action button (Start/Capture/Debug/Save + Load/Copy/Clear).
+
+Perbaikan save/load setting:s
+- Tambah simpan posisi window utama (`MainWindowX`, `MainWindowY`) ke config.
+- Saat load, posisi window dipulihkan jika koordinat masih ada di area monitor aktif.
+- Hilangkan override paksa `DebugAllLogs=false` saat load profile live.
+- `OcrMinMarginX100` tidak lagi dipaksa dibatasi max profile live; sekarang mempertahankan nilai user.
+
+Default margin:
+- `BlueHitPaddingPxDefault` diubah dari 2px -> 1px sesuai request.
+
+Dampak:
+- Semua setting utama terlihat dan bisa diubah dari UI.
+- Setting yang sebelumnya terasa "nggak kesimpan" karena dioverride saat load sekarang tetap persist.
+- Posisi UI utama ikut tersimpan antar launch.
+
+[2026-04-12 10:45] v8 Fix button/control kepotong di panel setting
+Masalah:
+- Sebagian button/control kepotong karena grid group pakai 2 pasangan field per baris (4 kolom), sehingga lebar cell control terlalu sempit.
+
+Perubahan:
+- `CreateSettingsGroup` diubah jadi 1 pasangan label+control per baris (2 kolom).
+- Control di tiap row sekarang `Dock=Fill` + anchor kiri/kanan supaya lebar mengikuti cell.
+- Label column diperlebar supaya teks label tidak menabrak control.
+- Tombol topmost dipendekkan teksnya (`Topmost: ON/OFF`) dan lebar dasar diringkas.
+
+Hasil yang diharapkan:
+- Tidak ada lagi button/control yang kepotong pada ukuran window fixed saat ini.
+
+[2026-04-12 10:55] v9 UI anti-kepotong lanjutan
+Perubahan:
+- Panel settings diubah jadi 1 kolom full-width (General -> Capture -> Scan -> OCR), tidak lagi 2 kolom berdampingan.
+- Panel settings dibuat scrollable (`AutoScroll=true`, tinggi tetap) agar kontrol tidak terpotong di window fixed size.
+- Action bar ditambah row height eksplisit 34px agar teks tombol tidak clip vertikal.
+
+Tujuan:
+- Hilangkan clipping horizontal/vertikal pada button/control di berbagai ukuran DPI.
+
+[2026-04-12 11:05] v10 Auto-save/auto-load config (hapus tombol Save/Load)
+Perubahan:
+- Hapus tombol `Save Config` dan `Load Config` dari action bar.
+- Auto-load tetap dijalankan saat startup (`LoadConfigFile()` di constructor).
+- Tambah auto-save debounce 650ms untuk perubahan setting UI.
+- Auto-save dipicu dari: spin, combo, checkbox, textbox, dan perpindahan posisi window utama.
+- Auto-save hanya menulis file jika fingerprint config berubah (anti write spam).
+- Save saat close tetap ada, tapi silent.
+
+Dampak:
+- Tidak perlu klik save/load manual lagi.
+- Perubahan setting dan posisi UI tersimpan otomatis.
+
+[2026-04-12 11:15] v11 Fix UI fixed-no-scroll + button clipping
+Perubahan:
+- UI diubah jadi fixed lebih tinggi/lebar: 700x860.
+- Settings kembali ke layout 2 kolom grup (General/Capture di atas, Scan/OCR di bawah) tanpa scroll.
+- Action bar diubah ke 3 kolom dan row height 40px agar label tombol tidak kepotong.
+- Style button dinaikkan ke tinggi 34px + min width 96px.
+
+Target:
+- Tidak ada clipping di tombol STOP/Capture/Debug pada fixed window.
+- Tidak perlu scroll untuk setting utama.
+
+[2026-04-12 11:25] v12 Layout 4-sejajar + tombol kecil + fix Use Active
+Perubahan sesuai request:
+- Settings/config diubah jadi 4 grup sejajar dalam 1 baris:
+  General | Capture | Scan | OCR.
+- Ukuran window fixed diperlebar ke 1150x860 agar layout 4-sejajar tetap muat tanpa scroll.
+- Tombol action dikecilkan (height 30, min width 78).
+
+Fix Use Active:
+- Jika foreground window tidak valid (umumnya karena fokus keburu ke app ini), sekarang fallback:
+  1) cari window berdasarkan title hint saat ini,
+  2) fallback ke default title (FiveM),
+  3) fallback ke semua window non-app,
+  lalu pilih kandidat area terbesar.
+- Hasilnya tombol `Use Active` tidak gagal terus dengan pesan "gagal ambil window aktif".
+
+[2026-04-12 11:30] v13 Remove debug dropdown
+Perubahan:
+- Dropdown `DEBUG ON/OFF` di panel setting dihapus total.
+- Kontrol debug sekarang hanya lewat tombol `Debug` di action bar.
+- Sinkronisasi load config tetap update teks tombol (`Debug: ON/OFF`).
+- Auto-save hooks dibersihkan dari referensi dropdown debug.
+
+[2026-04-12 11:45] v14 Compact GUI + Auto Mundur cycle + Use Active fallback
+Perubahan UI:
+- Window fixed dikecilkan jadi 980x820 (lebih compact/minimalis).
+- Config tetap 4 grup sejajar horizontal: General | Capture | Scan | OCR.
+- Width komponen target diperkecil agar muat di mode compact.
+
+Fitur baru Auto Mundur (configurable):
+- Ditambah state-machine non-blocking di loop utama dengan urutan:
+  1) press key angka (default `3`) sebanyak N kali (default 3)
+  2) tunggu T detik (default 18s)
+  3) tahan key `S` selama H detik (default 3s)
+  4) lepas key `S`
+  5) jeda P detik (default 2s)
+  6) ulang siklus
+- Semua parameter bisa diatur dari panel `Scan`:
+  - Auto Mundur ON/OFF
+  - Key (0-9)
+  - Clicks
+  - Wait s
+  - Hold S s
+  - Pause s
+- Semua parameter tersimpan di config + ikut auto-save.
+
+Input engine:
+- Tambah API `NativeInput.KeyDown` / `NativeInput.KeyUp`.
+- `PressKey` sekarang memanggil down+up.
+
+Fix Use Active:
+- Jika foreground gagal (sering karena fokus balik ke app), sekarang fallback:
+  - cari by title hint,
+  - fallback ke default title,
+  - fallback ke all non-app windows,
+  lalu pilih window dengan area terbesar.

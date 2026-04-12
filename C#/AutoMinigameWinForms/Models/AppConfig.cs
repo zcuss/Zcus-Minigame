@@ -33,6 +33,14 @@ public sealed class AppConfig
     public double FallbackDeadlineRatio { get; set; } = AppConstants.LiveProfileFallbackDeadlineRatio;
     public int OcrMajorityWindow { get; set; } = AppConstants.LiveProfileOcrMajorityWindow;
     public int OcrFireMinMarginX100 { get; set; } = AppConstants.LiveProfileOcrFireMinMarginX100;
+    public int? MainWindowX { get; set; }
+    public int? MainWindowY { get; set; }
+    public bool AutoBackPlantEnabled { get; set; } = AppConstants.AutoBackPlantEnabledDefault;
+    public int AutoBackPlantClickKey { get; set; } = AppConstants.AutoBackPlantClickKeyDefault;
+    public int AutoBackPlantClickCount { get; set; } = AppConstants.AutoBackPlantClickCountDefault;
+    public int AutoBackPlantWaitSec { get; set; } = AppConstants.AutoBackPlantWaitSecDefault;
+    public int AutoBackPlantHoldSSec { get; set; } = AppConstants.AutoBackPlantHoldSSecDefault;
+    public int AutoBackPlantPauseSec { get; set; } = AppConstants.AutoBackPlantPauseSecDefault;
 
     public string LicenseKey { get; set; } = string.Empty;
     public string Software { get; set; } = AppConstants.SoftwareName;

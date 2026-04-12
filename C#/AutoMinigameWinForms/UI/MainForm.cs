@@ -35,6 +35,15 @@ public sealed class MainForm : Form
         RearmWait,
     }
 
+    private enum AutoBackPlantState
+    {
+        Idle,
+        Clicking,
+        WaitingBeforeBack,
+        HoldingS,
+        PlantPause,
+    }
+
     private readonly string _configPath;
     private readonly AppConfig _runtimeConfig;
     private readonly LicenseService _licenseService;
@@ -111,8 +120,17 @@ public sealed class MainForm : Form
     private bool _toggleBusy;
     private bool _isRuntimeRevalidating;
     private bool _debugAllLogs;
+    private bool _suspendAutoSave = true;
+    private bool _pendingAutoSave;
+    private double _autoSaveDueMs;
+    private string _lastSavedConfigFingerprint = string.Empty;
     private double _ocrMinScore = AppConstants.OcrMinScore;
     private double _ocrMinMargin = AppConstants.OcrMinMargin;
+    private const double AutoSaveDebounceMs = 650.0;
+    private AutoBackPlantState _autoBackPlantState = AutoBackPlantState.Idle;
+    private int _autoBackPlantClicksRemaining;
+    private double _autoBackPlantNextActionMs;
+    private bool _autoBackPlantSDown;
 
     private MiniPreviewForm? _miniPreview;
     private bool _captureEnabled = true;
@@ -148,9 +166,14 @@ public sealed class MainForm : Form
     private CheckBox _chkAlwaysOnTop = null!;
     private ComboBox _cbStartHotkey = null!;
     private ComboBox _cbHotkeyModifier = null!;
-    private ComboBox _cbDebugLogs = null!;
     private TextBox _tbWindowTitle = null!;
     private TextBox _tbHotkey = null!;
+    private CheckBox _chkAutoBackPlant = null!;
+    private NumericUpDown _spAutoBackKey = null!;
+    private NumericUpDown _spAutoBackClicks = null!;
+    private NumericUpDown _spAutoBackWaitSec = null!;
+    private NumericUpDown _spAutoBackHoldSSec = null!;
+    private NumericUpDown _spAutoBackPauseSec = null!;
 
     public MainForm(string configPath, AppConfig runtimeConfig, LicenseService licenseService, LogBridgeServer? logBridge = null)
     {
@@ -162,6 +185,8 @@ public sealed class MainForm : Form
         BuildMiniCapture();
         LoadConfigFile();
         SyncCfg();
+        _suspendAutoSave = false;
+        _lastSavedConfigFingerprint = BuildConfigFingerprint(BuildConfigFromUi());
 
         _timer.Interval = AppConstants.UpdateMs;
         _timer.Tick += (_, _) => Loop();
@@ -174,12 +199,12 @@ public sealed class MainForm : Form
         ApplyAppIcon();
         StartPosition = FormStartPosition.Manual;
         AutoScaleMode = AutoScaleMode.None;
-        SetBounds(100, 80, 620, 760);
+        SetBounds(100, 80, 700, 760);
         FormBorderStyle = FormBorderStyle.FixedSingle;
         MaximizeBox = false;
         MinimizeBox = true;
-        MinimumSize = new System.Drawing.Size(620, 760);
-        MaximumSize = new System.Drawing.Size(620, 760);
+        MinimumSize = new System.Drawing.Size(700, 760);
+        MaximumSize = new System.Drawing.Size(700, 760);
         BackColor = Color.FromArgb(0x12, 0x12, 0x12);
         ForeColor = Color.White;
         Font = new Font("Segoe UI", 9F);
@@ -263,30 +288,19 @@ public sealed class MainForm : Form
         _cbMode = new ComboBox
         {
             DropDownStyle = ComboBoxStyle.DropDownList,
-            Width = 90,
+            Width = 78,
         };
         _cbMode.Items.AddRange(["WASD", "AUTO", "1234"]);
         _cbMode.SelectedItem = AppConstants.OcrModeDefault;
         _cbStartHotkey = new ComboBox
         {
             DropDownStyle = ComboBoxStyle.DropDownList,
-            Width = 90,
-        };
-        _cbDebugLogs = new ComboBox
-        {
-            DropDownStyle = ComboBoxStyle.DropDownList,
-            Width = 90,
-        };
-        _cbDebugLogs.Items.AddRange(["ON", "OFF"]);
-        _cbDebugLogs.SelectedItem = "ON";
-        _cbDebugLogs.SelectedIndexChanged += (_, _) =>
-        {
-            _debugAllLogs = string.Equals(_cbDebugLogs.SelectedItem?.ToString(), "ON", StringComparison.OrdinalIgnoreCase);
+            Width = 78,
         };
         _cbHotkeyModifier = new ComboBox
         {
             DropDownStyle = ComboBoxStyle.DropDownList,
-            Width = 110,
+            Width = 96,
         };
         _cbHotkeyModifier.Items.AddRange(["None", "Ctrl", "Alt", "Shift", "Ctrl+Alt", "Ctrl+Shift", "Alt+Shift", "Ctrl+Alt+Shift"]);
         _cbHotkeyModifier.SelectedItem = AppConstants.DefaultStartHotkeyModifier;
@@ -294,7 +308,7 @@ public sealed class MainForm : Form
         _cbStartHotkey.SelectedItem = AppConstants.DefaultStartHotkey;
         _tbHotkey = new TextBox
         {
-            Width = 150,
+            Width = 120,
             ReadOnly = true,
             ShortcutsEnabled = false,
             Text = "Click and press keybind",
@@ -309,7 +323,7 @@ public sealed class MainForm : Form
 
         _tbWindowTitle = new TextBox
         {
-            Width = 128,
+            Width = 88,
             Text = AppConstants.WindowTitle,
         };
         _tbWindowTitle.TextChanged += (_, _) =>
@@ -320,23 +334,30 @@ public sealed class MainForm : Form
 
         var btnUseActiveWindow = new Button
         {
-            Text = "Use Active",
-            Width = 74,
-            Height = 24,
+            Text = "Set Active",
+            Width = 82,
+            Height = 26,
             AutoSize = false,
         };
         StyleButton(btnUseActiveWindow, ButtonTone.Secondary);
         btnUseActiveWindow.Click += (_, _) => ApplyActiveWindowTarget();
 
-        var windowTargetPanel = new FlowLayoutPanel
+        var windowTargetPanel = new TableLayoutPanel
         {
             AutoSize = true,
-            WrapContents = false,
+            ColumnCount = 1,
+            RowCount = 2,
             Margin = new Padding(0),
             Padding = new Padding(0),
         };
-        windowTargetPanel.Controls.Add(_tbWindowTitle);
-        windowTargetPanel.Controls.Add(btnUseActiveWindow);
+        windowTargetPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        windowTargetPanel.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        windowTargetPanel.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        _tbWindowTitle.Dock = DockStyle.Fill;
+        btnUseActiveWindow.Dock = DockStyle.Left;
+        btnUseActiveWindow.Margin = new Padding(0, 3, 0, 0);
+        windowTargetPanel.Controls.Add(_tbWindowTitle, 0, 0);
+        windowTargetPanel.Controls.Add(btnUseActiveWindow, 0, 1);
         _cbHotkeyModifier.SelectedIndexChanged += (_, _) =>
         {
             var modifierText = (_cbHotkeyModifier.SelectedItem?.ToString() ?? AppConstants.DefaultStartHotkeyModifier).Trim();
@@ -354,6 +375,27 @@ public sealed class MainForm : Form
         _spMiniY = NewSpin(0, 4000, AppConstants.MiniGuiY);
         _spMiniW = NewSpin(80, 800, AppConstants.MiniGuiW);
         _spMiniH = NewSpin(80, 800, AppConstants.MiniGuiH);
+        _chkAutoBackPlant = new CheckBox
+        {
+            Text = "AutoM: OFF",
+            AutoSize = false,
+            Width = 96,
+            Height = 24,
+            Checked = AppConstants.AutoBackPlantEnabledDefault,
+            Margin = new Padding(0, 0, 4, 0),
+        };
+        StyleCheckBox(_chkAutoBackPlant);
+        _chkAutoBackPlant.CheckedChanged += (_, _) =>
+        {
+            _chkAutoBackPlant.Text = _chkAutoBackPlant.Checked ? "AutoM: ON" : "AutoM: OFF";
+            ResetAutoBackPlantCycle();
+            ScheduleAutoSave();
+        };
+        _spAutoBackKey = NewSpin(0, 9, AppConstants.AutoBackPlantClickKeyDefault);
+        _spAutoBackClicks = NewSpin(1, 20, AppConstants.AutoBackPlantClickCountDefault);
+        _spAutoBackWaitSec = NewSpin(1, 120, AppConstants.AutoBackPlantWaitSecDefault);
+        _spAutoBackHoldSSec = NewSpin(1, 20, AppConstants.AutoBackPlantHoldSSecDefault);
+        _spAutoBackPauseSec = NewSpin(0, 20, AppConstants.AutoBackPlantPauseSecDefault);
         StyleSpin(_spCapX);
         StyleSpin(_spCapY);
         StyleSpin(_spCapW);
@@ -372,12 +414,28 @@ public sealed class MainForm : Form
         StyleSpin(_spMiniY);
         StyleSpin(_spMiniW);
         StyleSpin(_spMiniH);
+        StyleSpin(_spAutoBackKey);
+        StyleSpin(_spAutoBackClicks);
+        StyleSpin(_spAutoBackWaitSec);
+        StyleSpin(_spAutoBackHoldSSec);
+        StyleSpin(_spAutoBackPauseSec);
         StyleCombo(_cbMode);
-        StyleCombo(_cbDebugLogs);
         StyleCombo(_cbHotkeyModifier);
         StyleCombo(_cbStartHotkey);
         StyleTextBox(_tbWindowTitle);
         StyleTextBox(_tbHotkey);
+
+        _chkAlwaysOnTop = new CheckBox
+        {
+            Text = "Top: OFF",
+            AutoSize = false,
+            Width = 86,
+            Height = 24,
+            Checked = false,
+            Margin = new Padding(0, 0, 4, 0),
+        };
+        StyleCheckBox(_chkAlwaysOnTop);
+        _chkAlwaysOnTop.CheckedChanged += (_, _) => ApplyAlwaysOnTop(_chkAlwaysOnTop.Checked);
 
         var settingsPanel = new Panel
         {
@@ -399,21 +457,47 @@ public sealed class MainForm : Form
         settingsGrid.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         settingsGrid.RowStyles.Add(new RowStyle(SizeType.AutoSize));
 
-        settingsGrid.Controls.Add(CreateSettingsGroup("Capture", [
+        settingsGrid.Controls.Add(CreateSettingsGroup("General", [
             ("TARGET", windowTargetPanel),
-            ("CAP X", _spCapX), ("CAP Y", _spCapY), ("CAP W", _spCapW), ("CAP H", _spCapH),
-            ("MINI X", _spMiniX), ("MINI Y", _spMiniY), ("MINI W", _spMiniW), ("MINI H", _spMiniH)
+            ("MODE", _cbMode),
+            ("TOPMOST", _chkAlwaysOnTop),
+            ("HOTKEY MOD", _cbHotkeyModifier),
+            ("HOTKEY KEY", _cbStartHotkey),
+            ("KEYBIND", _tbHotkey)
         ]), 0, 0);
 
+        settingsGrid.Controls.Add(CreateSettingsGroup("Capture", [
+            ("CAP X", _spCapX),
+            ("CAP Y", _spCapY),
+            ("CAP W", _spCapW),
+            ("CAP H", _spCapH),
+            ("MINI X", _spMiniX),
+            ("MINI Y", _spMiniY),
+            ("MINI W", _spMiniW),
+            ("MINI H", _spMiniH)
+        ]), 0, 1);
+
         settingsGrid.Controls.Add(CreateSettingsGroup("Scan", [
-            ("SCAN X", _spScanX), ("SCAN Y", _spScanY), ("Tol x10", _spTol), ("Blue Pad", _spBluePad), ("Mode", _cbMode), ("Debug", _cbDebugLogs), ("Keybind", _tbHotkey)
+            ("SCAN X", _spScanX),
+            ("SCAN Y", _spScanY),
+            ("TOL x10", _spTol),
+            ("BLUE PAD", _spBluePad),
+            ("AUTO", _chkAutoBackPlant),
+            ("KEY 0-9", _spAutoBackKey),
+            ("CLICKS", _spAutoBackClicks),
+            ("WAIT s", _spAutoBackWaitSec),
+            ("HOLD S s", _spAutoBackHoldSSec),
+            ("PAUSE s", _spAutoBackPauseSec)
         ]), 1, 0);
 
         settingsGrid.Controls.Add(CreateSettingsGroup("OCR", [
-            ("OCR X", _spOcrX), ("OCR Y", _spOcrY), ("OCR W", _spOcrW), ("OCR H", _spOcrH),
-            ("Score%", _spOcrScore), ("Margin%", _spOcrMargin)
-        ]), 0, 1);
-        settingsGrid.SetColumnSpan(settingsGrid.GetControlFromPosition(0, 1)!, 2);
+            ("OCR X", _spOcrX),
+            ("OCR Y", _spOcrY),
+            ("OCR W", _spOcrW),
+            ("OCR H", _spOcrH),
+            ("SCORE%", _spOcrScore),
+            ("MARGIN%", _spOcrMargin)
+        ]), 1, 1);
 
         settingsPanel.Controls.Add(settingsGrid);
         layout.Controls.Add(settingsPanel, 0, 2);
@@ -421,21 +505,22 @@ public sealed class MainForm : Form
         var actionBar = new TableLayoutPanel
         {
             Dock = DockStyle.Top,
-            ColumnCount = 4,
+            ColumnCount = 3,
             AutoSize = true,
             Padding = new Padding(0, 0, 0, 6),
         };
         actionBar.RowCount = 2;
-        actionBar.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 25));
-        actionBar.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 25));
-        actionBar.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 25));
-        actionBar.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 25));
+        actionBar.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 33.34F));
+        actionBar.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 33.33F));
+        actionBar.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 33.33F));
+        actionBar.RowStyles.Add(new RowStyle(SizeType.Absolute, 36));
+        actionBar.RowStyles.Add(new RowStyle(SizeType.Absolute, 36));
 
         _btnStart = new Button
         {
             Text = "START",
             AutoSize = true,
-            Padding = new Padding(8, 6, 8, 6),
+            Padding = new Padding(4, 2, 4, 2),
         };
         StyleButton(_btnStart, ButtonTone.Primary);
         SetStartButtonStyle(false);
@@ -445,7 +530,7 @@ public sealed class MainForm : Form
         {
             Text = "Capture: ON",
             AutoSize = true,
-            Padding = new Padding(8, 6, 8, 6),
+            Padding = new Padding(4, 2, 4, 2),
         };
         StyleButton(_btnCapture, ButtonTone.Secondary);
         _btnCapture.Click += (_, _) => ToggleCapturePreview();
@@ -454,28 +539,15 @@ public sealed class MainForm : Form
         {
             Text = _debugAllLogs ? "Debug: ON" : "Debug: OFF",
             AutoSize = true,
-            Padding = new Padding(8, 6, 8, 6),
+            Padding = new Padding(4, 2, 4, 2),
         };
         StyleButton(_btnDebugLogs, ButtonTone.Secondary);
         _btnDebugLogs.Click += (_, _) =>
         {
             _debugAllLogs = !_debugAllLogs;
             _btnDebugLogs.Text = _debugAllLogs ? "Debug: ON" : "Debug: OFF";
-            _cbDebugLogs.SelectedItem = _debugAllLogs ? "ON" : "OFF";
             AppendLog($"Debug logs: {(_debugAllLogs ? "ON" : "OFF")}");
         };
-
-        _chkAlwaysOnTop = new CheckBox
-        {
-            Text = "Always On Top",
-            AutoSize = false,
-            Width = 130,
-            Height = 32,
-            Checked = false,
-            Margin = new Padding(0, 0, 6, 0),
-        };
-        StyleCheckBox(_chkAlwaysOnTop);
-        _chkAlwaysOnTop.CheckedChanged += (_, _) => ApplyAlwaysOnTop(_chkAlwaysOnTop.Checked);
 
         var btnCopy = new Button { Text = "Copy Log", AutoSize = true };
         StyleButton(btnCopy, ButtonTone.Secondary);
@@ -496,31 +568,18 @@ public sealed class MainForm : Form
         StyleButton(btnClear, ButtonTone.Warn);
         btnClear.Click += (_, _) => ClearLog();
 
-        var btnSaveCfg = new Button { Text = "Save Config", AutoSize = true };
-        StyleButton(btnSaveCfg, ButtonTone.Secondary);
-        btnSaveCfg.Click += (_, _) => SaveConfigFile();
-
-        var btnLoadCfg = new Button { Text = "Load Config", AutoSize = true };
-        StyleButton(btnLoadCfg, ButtonTone.Secondary);
-        btnLoadCfg.Click += (_, _) => LoadConfigFile();
-
         _btnStart.Dock = DockStyle.Fill;
         _btnCapture.Dock = DockStyle.Fill;
         _btnDebugLogs.Dock = DockStyle.Fill;
         _chkAlwaysOnTop.Dock = DockStyle.Fill;
-        btnSaveCfg.Dock = DockStyle.Fill;
-        btnLoadCfg.Dock = DockStyle.Fill;
         btnCopy.Dock = DockStyle.Fill;
         btnClear.Dock = DockStyle.Fill;
 
         actionBar.Controls.Add(_btnStart, 0, 0);
         actionBar.Controls.Add(_btnCapture, 1, 0);
         actionBar.Controls.Add(_btnDebugLogs, 2, 0);
-        actionBar.Controls.Add(_chkAlwaysOnTop, 3, 0);
-        actionBar.Controls.Add(btnSaveCfg, 0, 1);
-        actionBar.Controls.Add(btnLoadCfg, 1, 1);
-        actionBar.Controls.Add(btnCopy, 2, 1);
-        actionBar.Controls.Add(btnClear, 3, 1);
+        actionBar.Controls.Add(btnCopy, 0, 1);
+        actionBar.Controls.Add(btnClear, 1, 1);
         layout.Controls.Add(actionBar, 0, 3);
 
         _summaryLabel = new Label
@@ -550,6 +609,7 @@ public sealed class MainForm : Form
             ColumnCount = 2,
             RowCount = 1,
             Padding = new Padding(0),
+            MinimumSize = new System.Drawing.Size(0, 210),
         };
         bottomPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 67));
         bottomPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 33));
@@ -562,7 +622,7 @@ public sealed class MainForm : Form
             Dock = DockStyle.Fill,
             BackColor = Color.Black,
             ForeColor = Color.FromArgb(0x00, 0xFF, 0x88),
-            Font = new Font("Consolas", 9F),
+            Font = new Font("Consolas", 8.4F),
             BorderStyle = BorderStyle.FixedSingle,
             Margin = new Padding(0, 0, 6, 0),
         };
@@ -586,6 +646,7 @@ public sealed class MainForm : Form
         layout.Controls.Add(bottomPanel, 0, 6);
 
         Controls.Add(layout);
+        RegisterAutoSaveHooks();
         RefreshLicenseInfo();
         AppendLog("System: Ready. Klik START untuk mulai detect.");
     }
@@ -606,7 +667,7 @@ public sealed class MainForm : Form
             Minimum = min,
             Maximum = max,
             Value = Math.Max(min, Math.Min(max, value)),
-            Width = 78,
+            Width = 58,
         };
     }
 
@@ -637,9 +698,9 @@ public sealed class MainForm : Form
             Dock = DockStyle.Top,
             AutoSize = true,
             ForeColor = Color.FromArgb(195, 205, 225),
-            Font = new Font("Segoe UI Semibold", 8.7F, FontStyle.Bold),
-            Padding = new Padding(8, 6, 8, 6),
-            Margin = new Padding(0, 0, 0, 4),
+            Font = new Font("Segoe UI Semibold", 8.1F, FontStyle.Bold),
+            Padding = new Padding(6, 4, 6, 5),
+            Margin = new Padding(0, 0, 0, 3),
         };
 
         var grid = new TableLayoutPanel
@@ -649,9 +710,9 @@ public sealed class MainForm : Form
             ColumnCount = 4,
             Padding = new Padding(0),
         };
-        grid.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 66));
+        grid.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 54));
         grid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
-        grid.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 66));
+        grid.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 54));
         grid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
 
         for (var i = 0; i < fields.Length; i++)
@@ -670,11 +731,12 @@ public sealed class MainForm : Form
                 AutoSize = true,
                 Anchor = AnchorStyles.Left,
                 ForeColor = Color.FromArgb(205, 205, 205),
-                Margin = new Padding(0, 3, 6, 3),
-                Font = new Font("Segoe UI", 8.2F, FontStyle.Regular),
+                Margin = new Padding(0, 2, 4, 2),
+                Font = new Font("Segoe UI", 7.6F, FontStyle.Regular),
             };
-            control.Anchor = AnchorStyles.Left;
-            control.Margin = new Padding(0, 1, 8, 1);
+            control.Anchor = AnchorStyles.Left | AnchorStyles.Right;
+            control.Dock = DockStyle.Fill;
+            control.Margin = new Padding(0, 1, 3, 1);
 
             grid.Controls.Add(label, pairCol, row);
             grid.Controls.Add(control, pairCol + 1, row);
@@ -713,7 +775,7 @@ public sealed class MainForm : Form
         TopMost = false;
         _runtimeConfig.AlwaysOnTop = enabled;
         _chkAlwaysOnTop.BackColor = enabled ? Color.FromArgb(0, 165, 220) : Color.FromArgb(58, 58, 68);
-        _chkAlwaysOnTop.Text = enabled ? "Mini Always On Top: ON" : "Mini Always On Top: OFF";
+        _chkAlwaysOnTop.Text = enabled ? "Top: ON" : "Top: OFF";
         if (_miniPreview is not null)
         {
             _miniPreview.TopMost = enabled;
@@ -730,6 +792,117 @@ public sealed class MainForm : Form
         SetSpin(_spCapX, (int)_spCapX.Value + dx);
         SetSpin(_spCapY, (int)_spCapY.Value + dy);
         _cachedRegion = null;
+    }
+
+    private void ResetAutoBackPlantCycle()
+    {
+        if (_autoBackPlantSDown)
+        {
+            _ = NativeInput.KeyUp("s", _targetHwnd);
+            _autoBackPlantSDown = false;
+        }
+
+        _autoBackPlantState = AutoBackPlantState.Idle;
+        _autoBackPlantClicksRemaining = 0;
+        _autoBackPlantNextActionMs = 0.0;
+    }
+
+    private void RunAutoBackPlantCycle(double nowMs)
+    {
+        if (!_scanning || !_chkAutoBackPlant.Checked)
+        {
+            if (_autoBackPlantState != AutoBackPlantState.Idle)
+            {
+                AppendLog("[AutoM] paused");
+            }
+            ResetAutoBackPlantCycle();
+            return;
+        }
+
+        if (_autoBackPlantState == AutoBackPlantState.Idle)
+        {
+            _autoBackPlantClicksRemaining = Math.Max(1, (int)_spAutoBackClicks.Value);
+            _autoBackPlantState = AutoBackPlantState.Clicking;
+            _autoBackPlantNextActionMs = nowMs;
+            AppendLog($"[AutoM] start cycle | key={(int)_spAutoBackKey.Value} clicks={_autoBackPlantClicksRemaining}");
+        }
+
+        if (nowMs < _autoBackPlantNextActionMs)
+        {
+            return;
+        }
+
+        var clickKey = ((int)_spAutoBackKey.Value).ToString();
+
+        switch (_autoBackPlantState)
+        {
+            case AutoBackPlantState.Clicking:
+                if (!TryResolveTargetForAutoInput())
+                {
+                    AppendLog("[AutoM] waiting target window...");
+                    _autoBackPlantNextActionMs = nowMs + 900.0;
+                    return;
+                }
+                var clickSent = NativeInput.PressKey(clickKey, _targetHwnd);
+                _autoBackPlantClicksRemaining--;
+                AppendLog($"[AutoM] click {clickKey} {(clickSent ? "OK" : "FAIL")} | remaining={Math.Max(0, _autoBackPlantClicksRemaining)}");
+                if (_autoBackPlantClicksRemaining > 0)
+                {
+                    _autoBackPlantNextActionMs = nowMs + AppConstants.AutoBackPlantInterClickMs;
+                }
+                else
+                {
+                    _autoBackPlantState = AutoBackPlantState.WaitingBeforeBack;
+                    _autoBackPlantNextActionMs = nowMs + ((double)_spAutoBackWaitSec.Value * 1000.0);
+                    AppendLog($"[AutoM] wait {(int)_spAutoBackWaitSec.Value}s before back");
+                }
+                break;
+            case AutoBackPlantState.WaitingBeforeBack:
+                if (!TryResolveTargetForAutoInput())
+                {
+                    AppendLog("[AutoM] waiting target window...");
+                    _autoBackPlantNextActionMs = nowMs + 900.0;
+                    return;
+                }
+                var downSent = NativeInput.KeyDown("s", _targetHwnd);
+                _autoBackPlantSDown = true;
+                _autoBackPlantState = AutoBackPlantState.HoldingS;
+                _autoBackPlantNextActionMs = nowMs + ((double)_spAutoBackHoldSSec.Value * 1000.0);
+                AppendLog($"[AutoM] S down {(downSent ? "OK" : "FAIL")} | hold {(int)_spAutoBackHoldSSec.Value}s");
+                break;
+            case AutoBackPlantState.HoldingS:
+                var upSent = NativeInput.KeyUp("s", _targetHwnd);
+                _autoBackPlantSDown = false;
+                _autoBackPlantState = AutoBackPlantState.PlantPause;
+                _autoBackPlantNextActionMs = nowMs + ((double)_spAutoBackPauseSec.Value * 1000.0);
+                AppendLog($"[AutoM] S up {(upSent ? "OK" : "FAIL")} | pause {(int)_spAutoBackPauseSec.Value}s");
+                break;
+            case AutoBackPlantState.PlantPause:
+                AppendLog("[AutoM] cycle done -> repeat");
+                _autoBackPlantState = AutoBackPlantState.Idle;
+                _autoBackPlantNextActionMs = nowMs;
+                break;
+        }
+    }
+
+    private bool TryResolveTargetForAutoInput()
+    {
+        if (_targetHwnd.HasValue && _targetHwnd.Value != nint.Zero)
+        {
+            return true;
+        }
+
+        var windows = WindowFinder.GetWindowsWithTitle(_cfg.WindowTitle)
+            .Where(w => w.Area > 0)
+            .OrderByDescending(w => w.Area)
+            .ToList();
+        if (windows.Count == 0)
+        {
+            return false;
+        }
+
+        _targetHwnd = windows[0].Handle;
+        return true;
     }
 
     private async Task ToggleScanAsync()
@@ -773,6 +946,11 @@ public sealed class MainForm : Form
 
                 _lastLicenseRevalidateAtSec = _clock.Elapsed.TotalSeconds;
                 _scanning = true;
+                if (!_chkAutoBackPlant.Checked)
+                {
+                    _chkAutoBackPlant.Checked = true;
+                }
+                ResetAutoBackPlantCycle();
                 _pressArmed = true;
                 _wasOverlapping = false;
                 _lastOcrKeyStable = string.Empty;
@@ -802,6 +980,7 @@ public sealed class MainForm : Form
         }
 
         _scanning = false;
+        ResetAutoBackPlantCycle();
         _pressArmed = true;
         _wasOverlapping = false;
         _lastOcrKeyStable = string.Empty;
@@ -1176,12 +1355,12 @@ public sealed class MainForm : Form
     {
         button.AutoSize = false;
         button.Height = 28;
-        button.MinimumSize = new System.Drawing.Size(84, 28);
-        button.Margin = new Padding(3);
+        button.MinimumSize = new System.Drawing.Size(68, 28);
+        button.Margin = new Padding(2);
         button.FlatStyle = FlatStyle.Flat;
         button.FlatAppearance.BorderSize = 0;
         button.ForeColor = Color.White;
-        button.Font = new Font("Segoe UI Semibold", 8.2F, FontStyle.Bold);
+        button.Font = new Font("Segoe UI Semibold", 7.8F, FontStyle.Bold);
         button.BackColor = tone switch
         {
             ButtonTone.Primary => Color.FromArgb(0, 165, 220),
@@ -1199,7 +1378,7 @@ public sealed class MainForm : Form
         checkBox.FlatAppearance.BorderSize = 0;
         checkBox.ForeColor = Color.White;
         checkBox.BackColor = Color.FromArgb(58, 58, 68);
-        checkBox.Font = new Font("Segoe UI Semibold", 8.2F, FontStyle.Bold);
+        checkBox.Font = new Font("Segoe UI Semibold", 7.4F, FontStyle.Bold);
         checkBox.Margin = new Padding(3);
     }
 
@@ -1228,8 +1407,26 @@ public sealed class MainForm : Form
     {
         if (!WindowFinder.TryGetForegroundWindowInfo(out var win) || win is null)
         {
-            AppendLog("Window target: gagal ambil window aktif.");
-            return;
+            var hint = NormalizeWindowTitle(_tbWindowTitle.Text);
+            var candidates = WindowFinder.GetWindowsWithTitle(hint);
+            if (candidates.Count == 0 && !string.Equals(hint, AppConstants.WindowTitle, StringComparison.OrdinalIgnoreCase))
+            {
+                candidates = WindowFinder.GetWindowsWithTitle(AppConstants.WindowTitle);
+            }
+
+            if (candidates.Count == 0)
+            {
+                candidates = WindowFinder.GetWindowsWithTitle(string.Empty);
+            }
+
+            win = candidates
+                .OrderByDescending(x => x.Area)
+                .FirstOrDefault();
+            if (win is null)
+            {
+                AppendLog("Window target: gagal ambil window aktif.");
+                return;
+            }
         }
 
         _tbWindowTitle.Text = win.Title.Trim();
@@ -1253,6 +1450,13 @@ public sealed class MainForm : Form
 
     private static bool TryExtractHotkeyFromKeyEvent(KeyEventArgs e, out string modifierText, out string hotkeyText)
     {
+        if (e.KeyCode is Keys.ControlKey or Keys.ShiftKey or Keys.Menu)
+        {
+            modifierText = AppConstants.DefaultStartHotkeyModifier;
+            hotkeyText = AppConstants.DefaultStartHotkey;
+            return false;
+        }
+
         hotkeyText = KeyCodeToHotkeyText(e.KeyCode);
         if (string.IsNullOrWhiteSpace(hotkeyText) || !TryParseHotkey(hotkeyText, out _))
         {
@@ -1261,18 +1465,19 @@ public sealed class MainForm : Form
             return false;
         }
 
+        var modifiers = e.Modifiers;
         var parts = new List<string>(3);
-        if (e.Control)
+        if ((modifiers & Keys.Control) == Keys.Control)
         {
             parts.Add("Ctrl");
         }
 
-        if (e.Alt)
+        if ((modifiers & Keys.Alt) == Keys.Alt)
         {
             parts.Add("Alt");
         }
 
-        if (e.Shift)
+        if ((modifiers & Keys.Shift) == Keys.Shift)
         {
             parts.Add("Shift");
         }
@@ -1291,6 +1496,11 @@ public sealed class MainForm : Form
         if (keyCode is >= Keys.D0 and <= Keys.D9)
         {
             return ((int)(keyCode - Keys.D0)).ToString();
+        }
+
+        if (keyCode is >= Keys.NumPad0 and <= Keys.NumPad9)
+        {
+            return ((int)(keyCode - Keys.NumPad0)).ToString();
         }
 
         if (keyCode is >= Keys.F1 and <= Keys.F24)
@@ -1485,7 +1695,123 @@ public sealed class MainForm : Form
             FallbackDeadlineRatio = Math.Clamp(_fallbackDeadlineRatioRuntime, 0.45, 0.95),
             OcrMajorityWindow = Math.Clamp(_ocrMajorityWindowRuntime, 1, 7),
             OcrFireMinMarginX100 = (int)Math.Round(Math.Clamp(_ocrFireMinMarginRuntime, 0.0, 0.80) * 100.0),
+            MainWindowX = Left,
+            MainWindowY = Top,
+            AutoBackPlantEnabled = _chkAutoBackPlant.Checked,
+            AutoBackPlantClickKey = (int)_spAutoBackKey.Value,
+            AutoBackPlantClickCount = (int)_spAutoBackClicks.Value,
+            AutoBackPlantWaitSec = (int)_spAutoBackWaitSec.Value,
+            AutoBackPlantHoldSSec = (int)_spAutoBackHoldSSec.Value,
+            AutoBackPlantPauseSec = (int)_spAutoBackPauseSec.Value,
         };
+    }
+
+    private void RegisterAutoSaveHooks()
+    {
+        var controls = new Control[]
+        {
+            _spCapX, _spCapY, _spCapW, _spCapH,
+            _spScanX, _spScanY, _spOcrX, _spOcrY, _spOcrW, _spOcrH,
+            _spOcrScore, _spOcrMargin, _spTol, _spBluePad,
+            _spMiniX, _spMiniY, _spMiniW, _spMiniH,
+            _spAutoBackKey, _spAutoBackClicks, _spAutoBackWaitSec, _spAutoBackHoldSSec, _spAutoBackPauseSec,
+            _cbMode, _cbHotkeyModifier, _cbStartHotkey,
+            _chkAlwaysOnTop, _chkAutoBackPlant, _tbWindowTitle, _tbHotkey
+        };
+
+        foreach (var control in controls)
+        {
+            switch (control)
+            {
+                case NumericUpDown spin:
+                    spin.ValueChanged += (_, _) => ScheduleAutoSave();
+                    break;
+                case ComboBox combo:
+                    combo.SelectedIndexChanged += (_, _) => ScheduleAutoSave();
+                    break;
+                case CheckBox check:
+                    check.CheckedChanged += (_, _) => ScheduleAutoSave();
+                    break;
+                case TextBox text:
+                    text.TextChanged += (_, _) => ScheduleAutoSave();
+                    break;
+            }
+        }
+
+        Move += (_, _) => ScheduleAutoSave();
+    }
+
+    private void ScheduleAutoSave()
+    {
+        if (_suspendAutoSave)
+        {
+            return;
+        }
+
+        _pendingAutoSave = true;
+        _autoSaveDueMs = _clock.Elapsed.TotalMilliseconds + AutoSaveDebounceMs;
+    }
+
+    private static string BuildConfigFingerprint(AppConfig cfg)
+    {
+        return string.Join("|",
+            cfg.WindowTitle,
+            cfg.CaptureOffsetX,
+            cfg.CaptureOffsetY,
+            cfg.CaptureWidth,
+            cfg.CaptureHeight,
+            cfg.ScanCenterOffsetX,
+            cfg.ScanCenterOffsetY,
+            cfg.OcrOffsetX,
+            cfg.OcrOffsetY,
+            cfg.OcrBoxW,
+            cfg.OcrBoxH,
+            cfg.OcrMinScoreX100,
+            cfg.OcrMinMarginX100,
+            cfg.AngleToleranceX10,
+            cfg.BlueHitPaddingPx,
+            cfg.OcrMode,
+            cfg.MiniX,
+            cfg.MiniY,
+            cfg.MiniW,
+            cfg.MiniH,
+            cfg.CaptureEnabled,
+            cfg.AlwaysOnTop,
+            cfg.DebugAllLogs,
+            cfg.StartHotkey,
+            cfg.StartHotkeyModifier,
+            cfg.TuningProfile,
+            cfg.PressLatencyMs,
+            cfg.PressLatencyAutoTune,
+            cfg.FallbackDeadlineRatio,
+            cfg.OcrMajorityWindow,
+            cfg.OcrFireMinMarginX100,
+            cfg.MainWindowX,
+            cfg.MainWindowY,
+            cfg.AutoBackPlantEnabled,
+            cfg.AutoBackPlantClickKey,
+            cfg.AutoBackPlantClickCount,
+            cfg.AutoBackPlantWaitSec,
+            cfg.AutoBackPlantHoldSSec,
+            cfg.AutoBackPlantPauseSec);
+    }
+
+    private void TryAutoSave(double nowMs)
+    {
+        if (_suspendAutoSave || !_pendingAutoSave || nowMs < _autoSaveDueMs)
+        {
+            return;
+        }
+
+        _pendingAutoSave = false;
+        var current = BuildConfigFromUi();
+        var currentFingerprint = BuildConfigFingerprint(current);
+        if (string.Equals(currentFingerprint, _lastSavedConfigFingerprint, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        SaveConfigFile(silent: true);
     }
 
     private void ApplyConfig(AppConfig cfg)
@@ -1516,6 +1842,13 @@ public sealed class MainForm : Form
         SetSpin(_spMiniY, cfg.MiniY);
         SetSpin(_spMiniW, cfg.MiniW);
         SetSpin(_spMiniH, cfg.MiniH);
+        _chkAutoBackPlant.Checked = cfg.AutoBackPlantEnabled;
+        _chkAutoBackPlant.Text = _chkAutoBackPlant.Checked ? "Auto Mundur: ON" : "Auto Mundur: OFF";
+        SetSpin(_spAutoBackKey, cfg.AutoBackPlantClickKey);
+        SetSpin(_spAutoBackClicks, cfg.AutoBackPlantClickCount);
+        SetSpin(_spAutoBackWaitSec, cfg.AutoBackPlantWaitSec);
+        SetSpin(_spAutoBackHoldSSec, cfg.AutoBackPlantHoldSSec);
+        SetSpin(_spAutoBackPauseSec, cfg.AutoBackPlantPauseSec);
 
         _captureEnabled = cfg.CaptureEnabled;
         _btnCapture.Text = _captureEnabled ? "Capture: ON" : "Capture: OFF";
@@ -1528,7 +1861,6 @@ public sealed class MainForm : Form
         _cfg.WindowTitle = NormalizeWindowTitle(cfg.WindowTitle);
         _lastWindowTitle = _cfg.WindowTitle;
         _debugAllLogs = cfg.DebugAllLogs;
-        _cbDebugLogs.SelectedItem = _debugAllLogs ? "ON" : "OFF";
         if (_btnDebugLogs is not null)
         {
             _btnDebugLogs.Text = _debugAllLogs ? "Debug: ON" : "Debug: OFF";
@@ -1562,6 +1894,23 @@ public sealed class MainForm : Form
         _runtimeConfig.OcrMajorityWindow = _ocrMajorityWindowRuntime;
         _runtimeConfig.OcrFireMinMarginX100 = (int)Math.Round(_ocrFireMinMarginRuntime * 100.0);
         _runtimeConfig.BlueHitPaddingPx = Math.Clamp(cfg.BlueHitPaddingPx, 0, 24);
+        _runtimeConfig.MainWindowX = cfg.MainWindowX;
+        _runtimeConfig.MainWindowY = cfg.MainWindowY;
+        _runtimeConfig.AutoBackPlantEnabled = _chkAutoBackPlant.Checked;
+        _runtimeConfig.AutoBackPlantClickKey = (int)_spAutoBackKey.Value;
+        _runtimeConfig.AutoBackPlantClickCount = (int)_spAutoBackClicks.Value;
+        _runtimeConfig.AutoBackPlantWaitSec = (int)_spAutoBackWaitSec.Value;
+        _runtimeConfig.AutoBackPlantHoldSSec = (int)_spAutoBackHoldSSec.Value;
+        _runtimeConfig.AutoBackPlantPauseSec = (int)_spAutoBackPauseSec.Value;
+
+        if (cfg.MainWindowX.HasValue && cfg.MainWindowY.HasValue)
+        {
+            var target = new System.Drawing.Point(cfg.MainWindowX.Value, cfg.MainWindowY.Value);
+            if (IsPointVisibleOnAnyScreen(target))
+            {
+                Location = target;
+            }
+        }
         RefreshLicenseInfo();
     }
 
@@ -1584,10 +1933,14 @@ public sealed class MainForm : Form
             cfg.OcrMajorityWindow = cfg.OcrMajorityWindow <= 0 ? AppConstants.LiveProfileOcrMajorityWindow : cfg.OcrMajorityWindow;
             cfg.OcrFireMinMarginX100 = cfg.OcrFireMinMarginX100 <= 0 ? AppConstants.LiveProfileOcrFireMinMarginX100 : cfg.OcrFireMinMarginX100;
             cfg.BlueHitPaddingPx = Math.Clamp(cfg.BlueHitPaddingPx, 0, 24);
+            cfg.AutoBackPlantClickKey = Math.Clamp(cfg.AutoBackPlantClickKey, 0, 9);
+            cfg.AutoBackPlantClickCount = cfg.AutoBackPlantClickCount <= 0 ? AppConstants.AutoBackPlantClickCountDefault : Math.Clamp(cfg.AutoBackPlantClickCount, 1, 20);
+            cfg.AutoBackPlantWaitSec = cfg.AutoBackPlantWaitSec <= 0 ? AppConstants.AutoBackPlantWaitSecDefault : Math.Clamp(cfg.AutoBackPlantWaitSec, 1, 120);
+            cfg.AutoBackPlantHoldSSec = cfg.AutoBackPlantHoldSSec <= 0 ? AppConstants.AutoBackPlantHoldSSecDefault : Math.Clamp(cfg.AutoBackPlantHoldSSec, 1, 20);
+            cfg.AutoBackPlantPauseSec = cfg.AutoBackPlantPauseSec < 0 ? AppConstants.AutoBackPlantPauseSecDefault : Math.Clamp(cfg.AutoBackPlantPauseSec, 0, 20);
             return;
         }
 
-        cfg.DebugAllLogs = false;
         cfg.CaptureWidth = Math.Max(cfg.CaptureWidth, AppConstants.LiveProfileCaptureMinSize);
         cfg.CaptureHeight = Math.Max(cfg.CaptureHeight, AppConstants.LiveProfileCaptureMinSize);
         cfg.OcrBoxW = Math.Max(cfg.OcrBoxW, AppConstants.LiveProfileOcrBoxMinSize);
@@ -1595,14 +1948,34 @@ public sealed class MainForm : Form
         cfg.OcrMinScoreX100 = Math.Max(cfg.OcrMinScoreX100, AppConstants.LiveProfileOcrMinScoreX100);
         cfg.OcrMinMarginX100 = cfg.OcrMinMarginX100 <= 0
             ? AppConstants.LiveProfileOcrMinMarginX100
-            : Math.Min(cfg.OcrMinMarginX100, AppConstants.LiveProfileOcrMinMarginX100);
+            : Math.Clamp(cfg.OcrMinMarginX100, 0, 100);
         cfg.BlueHitPaddingPx = Math.Clamp(cfg.BlueHitPaddingPx, 0, 24);
 
         cfg.PressLatencyMs = AppConstants.LiveProfilePressLatencyMs;
         cfg.PressLatencyAutoTune = AppConstants.LiveProfilePressLatencyAutoTune;
         cfg.FallbackDeadlineRatio = cfg.FallbackDeadlineRatio <= 0 ? AppConstants.LiveProfileFallbackDeadlineRatio : cfg.FallbackDeadlineRatio;
         cfg.OcrMajorityWindow = cfg.OcrMajorityWindow <= 0 ? AppConstants.LiveProfileOcrMajorityWindow : cfg.OcrMajorityWindow;
-        cfg.OcrFireMinMarginX100 = cfg.OcrFireMinMarginX100 <= 0 ? AppConstants.LiveProfileOcrFireMinMarginX100 : cfg.OcrFireMinMarginX100;
+        cfg.OcrFireMinMarginX100 = cfg.OcrFireMinMarginX100 <= 0
+            ? AppConstants.LiveProfileOcrFireMinMarginX100
+            : Math.Clamp(cfg.OcrFireMinMarginX100, 0, 80);
+        cfg.AutoBackPlantClickKey = Math.Clamp(cfg.AutoBackPlantClickKey, 0, 9);
+        cfg.AutoBackPlantClickCount = cfg.AutoBackPlantClickCount <= 0 ? AppConstants.AutoBackPlantClickCountDefault : Math.Clamp(cfg.AutoBackPlantClickCount, 1, 20);
+        cfg.AutoBackPlantWaitSec = cfg.AutoBackPlantWaitSec <= 0 ? AppConstants.AutoBackPlantWaitSecDefault : Math.Clamp(cfg.AutoBackPlantWaitSec, 1, 120);
+        cfg.AutoBackPlantHoldSSec = cfg.AutoBackPlantHoldSSec <= 0 ? AppConstants.AutoBackPlantHoldSSecDefault : Math.Clamp(cfg.AutoBackPlantHoldSSec, 1, 20);
+        cfg.AutoBackPlantPauseSec = cfg.AutoBackPlantPauseSec < 0 ? AppConstants.AutoBackPlantPauseSecDefault : Math.Clamp(cfg.AutoBackPlantPauseSec, 0, 20);
+    }
+
+    private static bool IsPointVisibleOnAnyScreen(System.Drawing.Point point)
+    {
+        foreach (var screen in Screen.AllScreens)
+        {
+            if (screen.WorkingArea.Contains(point))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private static void SetSpin(NumericUpDown spin, int value)
@@ -1611,7 +1984,7 @@ public sealed class MainForm : Form
         spin.Value = clamped;
     }
 
-    private void SaveConfigFile()
+    private void SaveConfigFile(bool silent = false)
     {
         try
         {
@@ -1625,11 +1998,18 @@ public sealed class MainForm : Form
             merged.LicenseLastVerifiedAt = existing.LicenseLastVerifiedAt;
             merged.LicenseLastMessage = existing.LicenseLastMessage;
             ConfigStore.Save(_configPath, merged);
-            AppendLog($"Config saved: {Path.GetFileName(_configPath)}");
+            _lastSavedConfigFingerprint = BuildConfigFingerprint(merged);
+            if (!silent)
+            {
+                AppendLog($"Config saved: {Path.GetFileName(_configPath)}");
+            }
         }
         catch (Exception ex)
         {
-            AppendLog($"Config save failed: {ex.Message}");
+            if (!silent)
+            {
+                AppendLog($"Config save failed: {ex.Message}");
+            }
         }
     }
 
@@ -1730,6 +2110,8 @@ public sealed class MainForm : Form
 
         var now = _clock.Elapsed.TotalSeconds;
         var nowMs = _clock.Elapsed.TotalMilliseconds;
+        TryAutoSave(nowMs);
+        RunAutoBackPlantCycle(nowMs);
 
         var idleRenderFps = AppConstants.MaxIdleRenderFps > 0 ? AppConstants.MaxIdleRenderFps : 30;
 
@@ -1933,6 +2315,19 @@ public sealed class MainForm : Form
         var centerReliable = hasCenterDiff && centerDiffDeg < 120.0;
         var centerForTimingDiff = centerReliable ? centerDiffDeg : 999.0;
         var effectiveDiffDeg = centerReliable ? centerDiffDeg : edgeDiffDeg;
+        var useStrictCenterPress = mode == "WASD";
+        var wasdContactNow = result.Touching && result.TouchPixels >= AppConstants.WasdTouchMinPixels;
+        var wasdAngleContactFallback = useStrictCenterPress &&
+            result.Overlap &&
+            (
+                (centerReliable && centerForTimingDiff <= AppConstants.WasdNoTouchCenterFallbackMaxDiffDeg) ||
+                (!centerReliable && edgeDiffDeg <= AppConstants.WasdNoTouchEdgeFallbackMaxDiffDeg)
+            );
+        var wasdFireContactOk = !useStrictCenterPress || wasdContactNow || wasdAngleContactFallback;
+        var wasdRoundVisualStartOk = !useStrictCenterPress ||
+            (result.RedAngle.HasValue &&
+                result.BestDiff.HasValue &&
+                edgeDiffDeg <= AppConstants.WasdRoundStartMaxDiffDeg);
         _roundBestEffDiff = Math.Min(_roundBestEffDiff, effectiveDiffDeg);
 
         TryReleaseRearmToIdle(nowMs, result.Overlap, reliableKey);
@@ -1941,7 +2336,10 @@ public sealed class MainForm : Form
         {
             if (_roundState == RoundState.Idle)
             {
-                BeginRound(reliableKey, nowMs);
+                if (wasdRoundVisualStartOk)
+                {
+                    BeginRound(reliableKey, nowMs);
+                }
             }
             else if (_roundState is RoundState.Armed or RoundState.Candidate &&
                 !_roundKey.Equals(reliableKey, StringComparison.OrdinalIgnoreCase))
@@ -1960,38 +2358,49 @@ public sealed class MainForm : Form
             !_roundFired &&
             (nowMs - _roundStartMs) >= AppConstants.RoundTimeoutMs)
         {
-            var forcedKey = !string.IsNullOrWhiteSpace(reliableKey) ? reliableKey : _roundKey;
-            if (!string.IsNullOrWhiteSpace(forcedKey))
+            if (useStrictCenterPress && !wasdFireContactOk)
             {
-                var forcedSent = NativeInput.PressKey(forcedKey, _targetHwnd);
-                _lastAttempt = now;
-                if (forcedSent)
+                if (_debugAllLogs)
                 {
-                    _lastPress = now;
-                    _lastPressMs = nowMs;
-                    _pressArmed = false;
-                    _lastPressedKey = forcedKey;
-                    _lastValidOcrMs = 0;
-                    _hit++;
-                    AppendLog($"[{DateTime.Now:HH:mm:ss}] CLICK {forcedKey.ToUpperInvariant()} | total={_hit} score={score:0.000} diff={result.BestDiff.GetValueOrDefault(999.0):0.0} eff={effectiveDiffDeg:0.0} state={_roundState} fb=Y deadline=Y");
-                    CloseRoundAsFired(effectiveDiffDeg, fallbackFired: true, nowMs);
-                    RefreshSummary();
+                    var timeoutKey = !string.IsNullOrWhiteSpace(_roundKey) ? _roundKey.ToUpperInvariant() : "-";
+                    AppendLog($"[{DateTime.Now:HH:mm:ss}] TIMEOUT {timeoutKey} | no-touch touch={result.TouchPixels} diff={result.BestDiff.GetValueOrDefault(999.0):0.0} eff={effectiveDiffDeg:0.0}");
+                }
+                CloseRoundAsTimeout(nowMs, waitForReset: true);
+            }
+            else
+            {
+                var forcedKey = !string.IsNullOrWhiteSpace(reliableKey) ? reliableKey : _roundKey;
+                if (!string.IsNullOrWhiteSpace(forcedKey))
+                {
+                    var forcedSent = NativeInput.PressKey(forcedKey, _targetHwnd);
+                    _lastAttempt = now;
+                    if (forcedSent)
+                    {
+                        _lastPress = now;
+                        _lastPressMs = nowMs;
+                        _pressArmed = false;
+                        _lastPressedKey = forcedKey;
+                        _lastValidOcrMs = 0;
+                        _hit++;
+                        AppendLog($"[{DateTime.Now:HH:mm:ss}] CLICK {forcedKey.ToUpperInvariant()} | total={_hit} score={score:0.000} diff={result.BestDiff.GetValueOrDefault(999.0):0.0} eff={effectiveDiffDeg:0.0} state={_roundState} fb=Y deadline=Y");
+                        CloseRoundAsFired(effectiveDiffDeg, fallbackFired: true, nowMs);
+                        RefreshSummary();
+                    }
+                    else
+                    {
+                        CloseRoundAsTimeout(nowMs, waitForReset: true);
+                    }
                 }
                 else
                 {
                     CloseRoundAsTimeout(nowMs, waitForReset: true);
                 }
             }
-            else
-            {
-                CloseRoundAsTimeout(nowMs, waitForReset: true);
-            }
         }
 
         var strictDiffLimit = Math.Min(AppConstants.PressStrictMaxDiffDeg, _cfg.AngleToleranceDeg * AppConstants.PressStrictTolRatio);
         var centerGateLimit = Math.Max(AppConstants.PressCenterMaxDiffDeg, strictDiffLimit + 2.0);
         var centerFireLimit = Math.Min(14.0, centerGateLimit + 2.0);
-        var useStrictCenterPress = mode == "WASD";
         var wasdCenterFireLimit = useStrictCenterPress
             ? Math.Min(centerFireLimit, AppConstants.WasdCenterFireMaxDiffDeg)
             : centerFireLimit;
@@ -2087,26 +2496,25 @@ public sealed class MainForm : Form
 
         if (centerReliable)
         {
-            schedulerFireReady = schedulerDue && centerForTimingDiff <= wasdCenterFireLimit;
+            schedulerFireReady = schedulerDue &&
+                centerForTimingDiff <= wasdCenterFireLimit &&
+                wasdFireContactOk;
             if (useStrictCenterPress)
             {
                 directEdgeFireReady =
+                    wasdFireContactOk &&
                     result.Overlap &&
                     centerForTimingDiff <= wasdCenterFireLimit;
                 fallbackFireReady =
                     fallbackDue &&
+                    wasdFireContactOk &&
                     result.Overlap &&
-                    (
-                        centerForTimingDiff <= (wasdCenterFireLimit + 0.8) ||
-                        edgeDiffDeg <= AppConstants.WasdEdgeFallbackNoCenterMaxDiffDeg
-                    );
+                    centerForTimingDiff <= (wasdCenterFireLimit + 0.4);
                 hardFallbackFireReady =
                     hardFallbackDue &&
+                    wasdFireContactOk &&
                     result.Overlap &&
-                    (
-                        centerForTimingDiff <= (wasdCenterFireLimit + AppConstants.WasdCenterHardFallbackExtraDeg) ||
-                        edgeDiffDeg <= AppConstants.WasdEdgeHardFallbackNoCenterMaxDiffDeg
-                    );
+                    centerForTimingDiff <= (wasdCenterFireLimit + AppConstants.WasdCenterHardFallbackExtraDeg);
                 strictCenterFallbackReady = fallbackFireReady || hardFallbackFireReady;
             }
             else
@@ -2119,10 +2527,14 @@ public sealed class MainForm : Form
         {
             if (useStrictCenterPress)
             {
-                // WASD rescue: saat center tidak reliable, tetap tunggu overlap + edge sangat dekat.
+                // WASD rescue: saat center tidak reliable, tetap tunggu contact + edge sangat dekat.
                 directEdgeFireReady = false;
-                fallbackFireReady = fallbackDue && result.Overlap && edgeDiffDeg <= AppConstants.WasdEdgeFallbackNoCenterMaxDiffDeg;
-                hardFallbackFireReady = hardFallbackDue && result.Overlap && edgeDiffDeg <= AppConstants.WasdEdgeHardFallbackNoCenterMaxDiffDeg;
+                fallbackFireReady = fallbackDue &&
+                    wasdFireContactOk &&
+                    edgeDiffDeg <= AppConstants.WasdEdgeFallbackNoCenterMaxDiffDeg;
+                hardFallbackFireReady = hardFallbackDue &&
+                    wasdFireContactOk &&
+                    edgeDiffDeg <= AppConstants.WasdEdgeHardFallbackNoCenterMaxDiffDeg;
                 strictCenterFallbackReady = fallbackFireReady || hardFallbackFireReady;
             }
             else
@@ -2165,11 +2577,13 @@ public sealed class MainForm : Form
         if (useStrictCenterPress && hardFallbackDue)
         {
             wasdDeadlineRescueFireReady =
-                result.Overlap &&
+                wasdFireContactOk &&
                 (
-                    edgeDiffDeg <= AppConstants.WasdDeadlineRescueEdgeMaxDiffDeg ||
-                    (centerReliable && centerForTimingDiff <= (wasdCenterFireLimit + 2.0)) ||
-                    (timeToCenterMs.HasValue && timeToCenterMs.Value <= 220.0)
+                    (centerReliable && centerForTimingDiff <= (wasdCenterFireLimit + 0.8)) ||
+                    (!centerReliable &&
+                        edgeDiffDeg <= AppConstants.WasdDeadlineRescueEdgeMaxDiffDeg &&
+                        timeToCenterMs.HasValue &&
+                        timeToCenterMs.Value <= 140.0)
                 );
         }
         var qualityOrRescueOk = qualityFireOk || wasdDeadlineRescueFireReady;
@@ -2192,7 +2606,7 @@ public sealed class MainForm : Form
                 !ocr.IsAmbiguous);
         var wasdFallbackOcrBypassOk = useStrictCenterPress &&
             (fallbackDue || hardFallbackDue) &&
-            result.Overlap &&
+            wasdFireContactOk &&
             keyEvidenceForPress &&
             scoreOk;
         var wasdRelaxedOcrGateOk = useStrictCenterPress &&
@@ -2233,8 +2647,10 @@ public sealed class MainForm : Form
         var diffText = result.BestDiff.HasValue ? result.BestDiff.Value.ToString("0.0") : "-";
         var centerDiffText = hasCenterDiff ? centerDiffDeg.ToString("0.0") : "-";
         var ttcText = timeToCenterMs.HasValue ? timeToCenterMs.Value.ToString("0") : "-";
+        var touchText = wasdContactNow ? "Y" : "N";
+        var softTouchText = wasdAngleContactFallback ? "Y" : "N";
         _detailLabel.Text =
-            $"state={_roundState} rid={_roundId} key={_roundKey} red={redAngleText} diff={diffText} cDiff={centerDiffText} ttc={ttcText}ms lat={_pressLatencyMsRuntime:0}ms overlap={(result.Overlap ? "Y" : "N")} ocr={(reliableKey ?? "-")} src={(usingFallbackOcr ? "hold" : "live")} {dbg}";
+            $"state={_roundState} rid={_roundId} key={_roundKey} red={redAngleText} diff={diffText} cDiff={centerDiffText} ttc={ttcText}ms lat={_pressLatencyMsRuntime:0}ms overlap={(result.Overlap ? "Y" : "N")} touch={touchText}({result.TouchPixels}) softTouch={softTouchText} ocr={(reliableKey ?? "-")} src={(usingFallbackOcr ? "hold" : "live")} {dbg}";
 
         if (_debugAllLogs)
         {
@@ -2260,6 +2676,7 @@ public sealed class MainForm : Form
                     qualityOrRescueOk ? null : "quality-low",
                     centerReliable ? null : "center-unreliable",
                     centerReliable && centerDiffDeg > centerFireLimit ? "center-far" : null,
+                    useStrictCenterPress && !wasdFireContactOk ? "no-touch" : null,
                     schedulerEdgeOk ? null : "edge-far",
                     fallbackDue && !fallbackWindowReady ? "fallback-window" : null,
                     hardFallbackDue && !hardFallbackFireReady ? "hard-fallback-window" : null,
@@ -2610,6 +3027,7 @@ public sealed class MainForm : Form
         {
             _tbHotkey.Text = BuildHotkeyDisplay(normalizedModifier, normalized);
         }
+        AppendLog($"Hotkey set: {BuildHotkeyDisplay(normalizedModifier, normalized)}");
     }
 
     private void EnsureHotkeyItemExists(string hotkeyText)
@@ -2720,7 +3138,7 @@ public sealed class MainForm : Form
     {
         try
         {
-            SaveConfigFile();
+            SaveConfigFile(silent: true);
         }
         catch
         {

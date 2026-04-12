@@ -8,6 +8,8 @@ public sealed class DetectionResult : IDisposable
     public required Point Center { get; init; }
     public required Mat RedMask { get; init; }
     public required Mat BlueMask { get; init; }
+    public int TouchPixels { get; init; }
+    public bool Touching { get; init; }
     public Point? RedPoint { get; init; }
     public double? RedAngle { get; init; }
     public required List<double> BlueAngles { get; init; }

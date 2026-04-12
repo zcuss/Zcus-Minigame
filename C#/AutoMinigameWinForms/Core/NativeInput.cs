@@ -43,7 +43,7 @@ public static class NativeInput
     [DllImport("user32.dll")]
     private static extern void keybd_event(byte bVk, byte bScan, uint dwFlags, nuint dwExtraInfo);
 
-    public static bool PressKey(string key, nint? targetHwnd = null)
+    public static bool KeyDown(string key, nint? targetHwnd = null)
     {
         if (!AppConstants.VkMap.TryGetValue(key, out var vkByte))
         {
@@ -72,7 +72,35 @@ public static class NativeInput
                         ExtraInfo = 0,
                     }
                 }
-            },
+            }
+        };
+
+        var sent = SendInput((uint)inputs.Length, inputs, Marshal.SizeOf<Input>());
+        if (sent == (uint)inputs.Length)
+        {
+            return true;
+        }
+
+        // Fallback for environments where SendInput gets filtered.
+        keybd_event(vkByte, 0, 0, 0);
+        return true;
+    }
+
+    public static bool KeyUp(string key, nint? targetHwnd = null)
+    {
+        if (!AppConstants.VkMap.TryGetValue(key, out var vkByte))
+        {
+            return false;
+        }
+
+        if (targetHwnd.HasValue && targetHwnd.Value != nint.Zero && IsWindow(targetHwnd.Value))
+        {
+            _ = SetForegroundWindow(targetHwnd.Value);
+        }
+
+        var vk = (ushort)vkByte;
+        var inputs = new[]
+        {
             new Input
             {
                 Type = InputKeyboard,
@@ -96,9 +124,14 @@ public static class NativeInput
             return true;
         }
 
-        // Fallback for environments where SendInput gets filtered.
-        keybd_event(vkByte, 0, 0, 0);
         keybd_event(vkByte, 0, KeyEventfKeyUp, 0);
         return true;
+    }
+
+    public static bool PressKey(string key, nint? targetHwnd = null)
+    {
+        var downSent = KeyDown(key, targetHwnd);
+        var upSent = KeyUp(key, targetHwnd);
+        return downSent && upSent;
     }
 }

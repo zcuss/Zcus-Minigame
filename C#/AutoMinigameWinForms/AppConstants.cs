@@ -4,8 +4,13 @@ namespace AutoMinigameWinForms;
 
 public static class AppConstants
 {
+#if DEBUG
     public static readonly bool DebugBypassLicense = true;
     public static readonly bool DebugAutoStart = true;
+#else
+    public static readonly bool DebugBypassLicense = false;
+    public static readonly bool DebugAutoStart = false;
+#endif
     public const string TuningProfileLiveTimeoutPriority = "LiveTimeoutPriority";
 
     public const string WindowTitle = "FiveM";
@@ -34,12 +39,17 @@ public static class AppConstants
     public const double PressPredictionMinSpeedDegPerSec = 60.0;
     public const double PressPredictionMaxSpeedDegPerSec = 900.0;
     public const int RoundTimeoutMs = 1700;
-    public const double WasdCenterFireMaxDiffDeg = 12.5;
+    public const double WasdCenterFireMaxDiffDeg = 7.8;
     public const double WasdEdgeDirectNoCenterMaxDiffDeg = 8.8;
-    public const double WasdEdgeFallbackNoCenterMaxDiffDeg = 10.8;
-    public const double WasdEdgeHardFallbackNoCenterMaxDiffDeg = 12.8;
-    public const double WasdCenterHardFallbackExtraDeg = 1.2;
-    public const double WasdDeadlineRescueEdgeMaxDiffDeg = 11.8;
+    public const double WasdEdgeFallbackNoCenterMaxDiffDeg = 8.6;
+    public const double WasdEdgeHardFallbackNoCenterMaxDiffDeg = 10.2;
+    public const double WasdCenterHardFallbackExtraDeg = 0.6;
+    public const double WasdDeadlineRescueEdgeMaxDiffDeg = 9.4;
+    public const int WasdTouchBlueDilatePx = 1;
+    public const int WasdTouchMinPixels = 1;
+    public const double WasdNoTouchCenterFallbackMaxDiffDeg = 4.8;
+    public const double WasdNoTouchEdgeFallbackMaxDiffDeg = 6.0;
+    public const double WasdRoundStartMaxDiffDeg = 45.0;
     public const double WasdRoundSwitchWindowMs = 300.0;
 
     public const int LiveProfileCaptureMinSize = 160;
@@ -61,7 +71,7 @@ public static class AppConstants
     public const int OcrTemplateSize = 32;
     public const double OcrMinScore = 0.08;
     public const double OcrMinMargin = 0.00;
-    public const int BlueHitPaddingPxDefault = 2;
+    public const int BlueHitPaddingPxDefault = 1;
     public const int OcrCrosshairMaskRadius = 1;
     public const int OcrNeedleMaskRadius = 10;
     public const string OcrModeDefault = "WASD";
@@ -81,6 +91,13 @@ public static class AppConstants
     public const string LicenseProductCode = "ZERO_MINIGAME";
     public const int LicenseApiTimeoutSec = 15;
     public const string LogBridgeApiBaseUrl = "http://127.0.0.1:8765/";
+    public const bool AutoBackPlantEnabledDefault = true;
+    public const int AutoBackPlantClickKeyDefault = 3;
+    public const int AutoBackPlantClickCountDefault = 3;
+    public const int AutoBackPlantWaitSecDefault = 18;
+    public const int AutoBackPlantHoldSSecDefault = 3;
+    public const int AutoBackPlantPauseSecDefault = 2;
+    public const int AutoBackPlantInterClickMs = 120;
 
     public static readonly IReadOnlyDictionary<string, byte> VkMap = new Dictionary<string, byte>(StringComparer.OrdinalIgnoreCase)
     {

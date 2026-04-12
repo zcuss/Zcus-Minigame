@@ -4,6 +4,7 @@ obj/
 
 # Publish output
 publish/
+.publish/
 
 # User-local files
 *.user

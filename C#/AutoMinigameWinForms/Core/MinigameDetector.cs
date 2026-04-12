@@ -90,6 +90,19 @@ public static class MinigameDetector
         double? redAngle = redPoint.HasValue ? AngleFromCenter(redPoint.Value, center) : null;
 
         var (blueAngles, bluePoints) = ScanBlueAngles(blueFiltered, center, cfg);
+        var touchPixels = 0;
+        using (var touchMask = new Mat())
+        {
+            using var touchBlueMask = blueFilteredRaw.Clone();
+            if (AppConstants.WasdTouchBlueDilatePx > 0)
+            {
+                using var touchKernel = Cv2.GetStructuringElement(MorphShapes.Rect, new OpenCvSharp.Size(3, 3));
+                Cv2.Dilate(touchBlueMask, touchBlueMask, touchKernel, iterations: AppConstants.WasdTouchBlueDilatePx);
+            }
+
+            Cv2.BitwiseAnd(redFiltered, touchBlueMask, touchMask);
+            touchPixels = Cv2.CountNonZero(touchMask);
+        }
 
         var overlap = false;
         double? bestDiff = null;
@@ -104,6 +117,8 @@ public static class MinigameDetector
             Center = center,
             RedMask = redFiltered,
             BlueMask = blueFiltered,
+            TouchPixels = touchPixels,
+            Touching = touchPixels > 0,
             RedPoint = redPoint,
             RedAngle = redAngle,
             BlueAngles = blueAngles,
