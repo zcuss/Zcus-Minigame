@@ -1855,12 +1855,13 @@ public sealed class MainForm : Form
         var keyStable = _ocrSameKeyStreak >= AppConstants.OcrRequireStableReads;
         var isKeyOk = IsAllowedAndMapped(key, allowedKeys);
         var isFreshOcrForPress = (nowMs - _lastOcrMs) <= (AppConstants.OcrIntervalMs * 8.0);
-        var ocrRoundAccepted = isKeyOk && scoreOk && roundMarginOk && keyStable && !ocr.IsAmbiguous;
+        var ocrRoundCandidate = isKeyOk && scoreOk && keyStable;
+        var ocrRoundAccepted = ocrRoundCandidate && roundMarginOk && !ocr.IsAmbiguous;
         var ocrFireAccepted = isKeyOk && scoreOk && fireMarginOk && keyStable && !ocr.IsAmbiguous;
-        PushOcrMajorityKey(normalizedKey, ocrRoundAccepted);
+        PushOcrMajorityKey(normalizedKey, ocrRoundCandidate);
         var majorityKey = ResolveMajorityKey();
         string? reliableKey;
-        if (ocrRoundAccepted)
+        if (ocrRoundCandidate)
         {
             reliableKey = normalizedKey;
         }
@@ -1958,7 +1959,9 @@ public sealed class MainForm : Form
         var centerGateLimit = Math.Max(AppConstants.PressCenterMaxDiffDeg, strictDiffLimit + 2.0);
         var centerFireLimit = Math.Min(14.0, centerGateLimit + 2.0);
         var useStrictCenterPress = mode == "WASD";
-        var wasdCenterFireLimit = useStrictCenterPress ? Math.Min(centerFireLimit, 8.6) : centerFireLimit;
+        var wasdCenterFireLimit = useStrictCenterPress
+            ? Math.Min(centerFireLimit, AppConstants.WasdCenterFireMaxDiffDeg)
+            : centerFireLimit;
 
         var signedToCenterDeg = (double?)null;
         if (result.RedAngle.HasValue && centerReliable)
@@ -2055,16 +2058,18 @@ public sealed class MainForm : Form
                 ? result.Overlap && centerForTimingDiff <= wasdCenterFireLimit
                 : directEdgeFireReady;
             fallbackFireReady = fallbackDue && centerForTimingDiff <= (useStrictCenterPress ? wasdCenterFireLimit : (centerFireLimit + 1.5));
-            hardFallbackFireReady = hardFallbackDue && centerForTimingDiff <= (useStrictCenterPress ? (wasdCenterFireLimit + 0.5) : (centerFireLimit + 3.0));
+            hardFallbackFireReady = hardFallbackDue && centerForTimingDiff <= (useStrictCenterPress
+                ? (wasdCenterFireLimit + AppConstants.WasdCenterHardFallbackExtraDeg)
+                : (centerFireLimit + 3.0));
         }
         else
         {
             if (useStrictCenterPress)
             {
                 // WASD rescue: saat center tidak reliable, tetap tunggu overlap + edge sangat dekat.
-                directEdgeFireReady = result.Overlap && edgeDiffDeg <= 6.2;
-                fallbackFireReady = fallbackDue && result.Overlap && edgeDiffDeg <= 7.8;
-                hardFallbackFireReady = hardFallbackDue && result.Overlap && edgeDiffDeg <= 9.2;
+                directEdgeFireReady = result.Overlap && edgeDiffDeg <= AppConstants.WasdEdgeDirectNoCenterMaxDiffDeg;
+                fallbackFireReady = fallbackDue && result.Overlap && edgeDiffDeg <= AppConstants.WasdEdgeFallbackNoCenterMaxDiffDeg;
+                hardFallbackFireReady = hardFallbackDue && result.Overlap && edgeDiffDeg <= AppConstants.WasdEdgeHardFallbackNoCenterMaxDiffDeg;
                 strictCenterFallbackReady = fallbackFireReady || hardFallbackFireReady;
             }
             else
@@ -2119,6 +2124,11 @@ public sealed class MainForm : Form
                 marginOk &&
                 keyStable &&
                 !ocr.IsAmbiguous);
+        var wasdFallbackOcrBypassOk = useStrictCenterPress &&
+            (fallbackDue || hardFallbackDue) &&
+            result.Overlap &&
+            keyEvidenceForPress &&
+            scoreOk;
         var wasdRelaxedOcrGateOk = useStrictCenterPress &&
             roundLockedForPress &&
             ocrRoundAccepted &&
@@ -2130,7 +2140,7 @@ public sealed class MainForm : Form
             cooldownOk &&
             qualityFireOk;
         var keyEvidenceGateOk = keyEvidenceForPress || wasdNoSkipGateBypass;
-        var ocrGateFinalOk = ocrGateForPress || wasdNoSkipGateBypass;
+        var ocrGateFinalOk = ocrGateForPress || wasdNoSkipGateBypass || wasdFallbackOcrBypassOk;
 
         var canPressNormal =
             AppConstants.AutoPressOnOverlap &&
