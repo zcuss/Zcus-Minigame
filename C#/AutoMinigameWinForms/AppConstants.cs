@@ -34,11 +34,13 @@ public static class AppConstants
     public const double PressPredictionMinSpeedDegPerSec = 60.0;
     public const double PressPredictionMaxSpeedDegPerSec = 900.0;
     public const int RoundTimeoutMs = 1700;
-    public const double WasdCenterFireMaxDiffDeg = 10.8;
-    public const double WasdEdgeDirectNoCenterMaxDiffDeg = 7.6;
-    public const double WasdEdgeFallbackNoCenterMaxDiffDeg = 9.4;
-    public const double WasdEdgeHardFallbackNoCenterMaxDiffDeg = 11.2;
-    public const double WasdCenterHardFallbackExtraDeg = 0.8;
+    public const double WasdCenterFireMaxDiffDeg = 12.5;
+    public const double WasdEdgeDirectNoCenterMaxDiffDeg = 8.8;
+    public const double WasdEdgeFallbackNoCenterMaxDiffDeg = 10.8;
+    public const double WasdEdgeHardFallbackNoCenterMaxDiffDeg = 12.8;
+    public const double WasdCenterHardFallbackExtraDeg = 1.2;
+    public const double WasdDeadlineRescueEdgeMaxDiffDeg = 14.5;
+    public const double WasdRoundSwitchWindowMs = 300.0;
 
     public const int LiveProfileCaptureMinSize = 160;
     public const int LiveProfileOcrBoxMinSize = 36;

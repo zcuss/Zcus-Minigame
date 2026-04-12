@@ -1,0 +1,83 @@
+LOG UPDATE - AUTOMINIGAME WINFORMS
+Path: C#/AutoMinigameWinForms/log-updat.txt
+Purpose: catatan perubahan + hasil test supaya tuning berikutnya tidak muter di hal yang sama.
+
+==================================================
+RULES PAKAI FILE INI
+==================================================
+1) Baca "STATE TERAKHIR" dulu sebelum ubah logic.
+2) Setiap update WAJIB append entry baru (jangan overwrite history lama).
+3) Entry minimal isi:
+   - tanggal/jam
+   - perubahan utama
+   - metrik sebelum/sesudah
+   - masalah yang masih tersisa
+   - next action yang belum dicoba
+4) Jangan ulang eksperimen lama kalau hasilnya sudah tercatat gagal.
+
+==================================================
+STATE TERAKHIR (BASELINE)
+==================================================
+Tanggal: 2026-04-12
+Mode utama: WASD
+Gejala:
+- App log sudah banyak CLICK, tapi tester masih banyak TIMEOUT/MISS.
+- Session terakhir: rounds=68, fires=32, timeout=36, timeoutRate=52.9%, fallback=2, noClickMax=8.
+
+Interpretasi cepat:
+- Problem utama sekarang bukan "tidak ada click sama sekali", tapi konsistensi trigger per round masih rendah.
+- Banyak req tidak kena karena round miss deadline atau key evidence belum cukup stabil di momen trigger.
+
+==================================================
+UPDATE HISTORY
+==================================================
+[2026-04-12 07:xx] v1 Stabilize WASD Trigger (fase 1)
+Perubahan:
+- Tambah ocrRoundCandidate untuk bootstrap round (lebih longgar dari ocrRoundAccepted).
+- Majority queue diisi dari ocrRoundCandidate.
+- Tambah konstanta WASD thresholds ke AppConstants (hindari hardcoded di MainForm).
+- Tambah fallback OCR bypass untuk WASD saat fallbackDue/hardFallbackDue.
+
+Hasil:
+- CLICK naik, tapi timeout masih tinggi (52.9% dari sample user).
+
+Catatan:
+- Masih banyak TIMEOUT di tester walau app sudah click beberapa kali.
+- Ada outlier click dengan eff sangat jauh (contoh 153.9) saat deadline fallback.
+
+[2026-04-12 07:xx] v2 Stabilize WASD Trigger (fase 2)
+Perubahan:
+- Tambah anti re-key churn:
+  round tidak langsung di-timeout dan ganti key kalau OCR flicker;
+  switch key hanya di early window + butuh ocrRoundAccepted.
+- Longgarkan rescue path WASD (center+edge) saat mendekati deadline.
+- Tambah deadline rescue khusus WASD agar round tidak mati tanpa trigger.
+- Satukan gate quality + rescue (qualityOrRescueOk) supaya rescue benar-benar aktif.
+
+Status:
+- Patch sudah ditanam di AppConstants.cs + UI/MainForm.cs.
+- Build verifikasi sukses lewat output folder sementara.
+
+==================================================
+DO NOT REPEAT (ANTI MUTER)
+==================================================
+- Jangan hanya naikin threshold global berkali-kali tanpa lihat distribusi MISS per key (W/A/S/D).
+- Jangan reset round ke timeout setiap ada key mismatch singkat; ini bikin timeout count naik palsu.
+- Jangan validasi dari satu metrik saja (contoh jumlah CLICK); wajib lihat timeoutRate + offset tester.
+- Jangan build normal tanpa sadar AutoPushOnBuild aktif.
+  Gunakan: dotnet build -p:AutoPushOnBuild=false
+
+==================================================
+NEXT ACTION BACKLOG (YANG BELUM DICOBA)
+==================================================
+1) Tambah metrik per-key:
+   - attempts per key
+   - clicks per key
+   - timeout per key
+   - avg/p95 offset per key
+2) Tambah log reason saat timeout round:
+   - key-evidence fail / ocr stale / quality-low / center-far / edge-far
+3) Tambah adaptive threshold ringan:
+   - jika timeout streak tinggi, longgarkan rescue edge bertahap dalam sesi.
+4) Pisahkan tuning WASD vs 1234 total (jangan campur gate behavior).
+
