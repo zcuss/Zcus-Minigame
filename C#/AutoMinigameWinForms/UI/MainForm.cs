@@ -837,13 +837,12 @@ public sealed class MainForm : Form
         switch (_autoBackPlantState)
         {
             case AutoBackPlantState.Clicking:
-                if (!TryResolveTargetForAutoInput())
+                var clickTarget = ResolveAutoInputTargetHandle();
+                if (!clickTarget.HasValue)
                 {
-                    AppendLog("[AutoM] waiting target window...");
-                    _autoBackPlantNextActionMs = nowMs + 900.0;
-                    return;
+                    AppendLog("[AutoM] target not found -> send global");
                 }
-                var clickSent = NativeInput.PressKey(clickKey, _targetHwnd);
+                var clickSent = NativeInput.PressKey(clickKey, clickTarget);
                 _autoBackPlantClicksRemaining--;
                 AppendLog($"[AutoM] click {clickKey} {(clickSent ? "OK" : "FAIL")} | remaining={Math.Max(0, _autoBackPlantClicksRemaining)}");
                 if (_autoBackPlantClicksRemaining > 0)
@@ -858,20 +857,20 @@ public sealed class MainForm : Form
                 }
                 break;
             case AutoBackPlantState.WaitingBeforeBack:
-                if (!TryResolveTargetForAutoInput())
+                var downTarget = ResolveAutoInputTargetHandle();
+                if (!downTarget.HasValue)
                 {
-                    AppendLog("[AutoM] waiting target window...");
-                    _autoBackPlantNextActionMs = nowMs + 900.0;
-                    return;
+                    AppendLog("[AutoM] target not found -> S down global");
                 }
-                var downSent = NativeInput.KeyDown("s", _targetHwnd);
+                var downSent = NativeInput.KeyDown("s", downTarget);
                 _autoBackPlantSDown = true;
                 _autoBackPlantState = AutoBackPlantState.HoldingS;
                 _autoBackPlantNextActionMs = nowMs + ((double)_spAutoBackHoldSSec.Value * 1000.0);
                 AppendLog($"[AutoM] S down {(downSent ? "OK" : "FAIL")} | hold {(int)_spAutoBackHoldSSec.Value}s");
                 break;
             case AutoBackPlantState.HoldingS:
-                var upSent = NativeInput.KeyUp("s", _targetHwnd);
+                var upTarget = ResolveAutoInputTargetHandle();
+                var upSent = NativeInput.KeyUp("s", upTarget);
                 _autoBackPlantSDown = false;
                 _autoBackPlantState = AutoBackPlantState.PlantPause;
                 _autoBackPlantNextActionMs = nowMs + ((double)_spAutoBackPauseSec.Value * 1000.0);
@@ -885,24 +884,37 @@ public sealed class MainForm : Form
         }
     }
 
-    private bool TryResolveTargetForAutoInput()
+    private nint? ResolveAutoInputTargetHandle()
     {
-        if (_targetHwnd.HasValue && _targetHwnd.Value != nint.Zero)
+        var hint = NormalizeWindowTitle(_tbWindowTitle.Text);
+
+        if (WindowFinder.TryGetForegroundWindowInfo(out var fgWin) && fgWin is not null)
         {
-            return true;
+            if (string.IsNullOrWhiteSpace(hint) || fgWin.Title.Contains(hint, StringComparison.OrdinalIgnoreCase))
+            {
+                _targetHwnd = fgWin.Handle;
+                return _targetHwnd;
+            }
         }
 
-        var windows = WindowFinder.GetWindowsWithTitle(_cfg.WindowTitle)
+        var windows = WindowFinder.GetWindowsWithTitle(hint);
+        if (windows.Count == 0 && !string.Equals(hint, _cfg.WindowTitle, StringComparison.OrdinalIgnoreCase))
+        {
+            windows = WindowFinder.GetWindowsWithTitle(_cfg.WindowTitle);
+        }
+
+        if (windows.Count == 0 && !string.Equals(hint, AppConstants.WindowTitle, StringComparison.OrdinalIgnoreCase))
+        {
+            windows = WindowFinder.GetWindowsWithTitle(AppConstants.WindowTitle);
+        }
+
+        var selected = windows
             .Where(w => w.Area > 0)
             .OrderByDescending(w => w.Area)
-            .ToList();
-        if (windows.Count == 0)
-        {
-            return false;
-        }
+            .FirstOrDefault();
 
-        _targetHwnd = windows[0].Handle;
-        return true;
+        _targetHwnd = selected?.Handle;
+        return _targetHwnd;
     }
 
     private async Task ToggleScanAsync()
